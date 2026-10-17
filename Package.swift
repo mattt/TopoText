@@ -22,5 +22,12 @@ let package = Package(
             name: "TopoTextTests",
             dependencies: ["TopoText"]
         ),
+        // A development tool that checks TopoText against a real Notes database.
+        // It is not a product, so packages that depend on TopoText don't build it.
+        .executableTarget(
+            name: "Validate",
+            dependencies: ["TopoText"],
+            path: "Tools/Validate"
+        ),
     ]
 )
