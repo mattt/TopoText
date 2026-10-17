@@ -231,7 +231,7 @@ public actor Store {
     ///
     /// The store reads the attachment's row, closes its connection,
     /// and then looks for the file.
-    /// The store looks in the places that Documentation/NoteStore.md lists;
+    /// The store looks in the places that <doc:NoteStore> lists;
     /// it doesn't find a file that Notes keeps elsewhere.
     /// - Parameter identifier: The identifier of the attachment.
     /// - Returns: The file, with symbolic links resolved, or `nil` if no file is found.

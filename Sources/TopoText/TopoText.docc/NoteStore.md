@@ -1,12 +1,13 @@
 # The Notes database
 
-This document records the facts about the Notes database that TopoText relies on,
+This article records the facts about the Notes database that TopoText relies on,
 and where each fact comes from.
 Read it before you change a query or a decoder.
 
 Apple doesn't document this format.
 The facts come from open-source projects that read it,
-and most were checked only against those projects' sources and synthetic tests.
+from TopoText's synthetic tests,
+and from one check against a real database, described at the end.
 Facts marked **[conflict]** differ between sources;
 facts marked **[inference]** follow from the sources but no source states them.
 
