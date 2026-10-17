@@ -1,51 +1,32 @@
 # TopoText
 
-TopoText reads the database of the Notes app on macOS.
-It lists accounts, folders, and notes,
+TopoText reads the Notes app's database on macOS.
+It lists folders and notes,
 searches notes by their contents,
-and decodes a note's contents into paragraphs of formatted text,
-with checklists, tables, and attachments.
+and decodes each note into paragraphs of formatted text,
+including checklists, tables, and attachments.
 
-TopoText is Apple's internal name for the note text format.
+The name comes from Apple's internal name for the note text format.
 
 ## Requirements
 
-- Xcode 16.3+
-- Swift 6.1+
 - macOS 15.1+
+- Swift 6.1+ (Xcode 16.3+)
 
-The caller must have access to the Notes folder,
-`~/Library/Group Containers/group.com.apple.notes`,
-for example through Full Disk Access or a security-scoped bookmark of the folder.
-TopoText does not request permissions or manage security-scoped bookmarks.
-The access must cover the folder, not only the database file,
-because SQLite also reads the write-ahead log files next to it.
-Keep any security scope active until each call returns.
+Your app needs read access to `~/Library/Group Containers/group.com.apple.notes`,
+through Full Disk Access or a security-scoped bookmark for that folder.
+Grant access to the whole folder, not just `NoteStore.sqlite`;
+SQLite also reads the write-ahead log files next to it.
 
 ## Installation
 
-### Swift Package Manager
-
-Add TopoText as a dependency to your `Package.swift`:
+Add the package to your `Package.swift`:
 
 ```swift
-dependencies: [
-    .package(url: "https://github.com/mattt/TopoText.git", from: "0.1.0")
-]
+.package(url: "https://github.com/mattt/TopoText.git", from: "0.1.0")
 ```
 
-Then add the product to your target's dependencies:
-
-```swift
-targets: [
-    .target(
-        name: "YourTarget",
-        dependencies: [
-            .product(name: "TopoText", package: "TopoText")
-        ]
-    )
-]
-```
+Then add `.product(name: "TopoText", package: "TopoText")` to your target's dependencies.
 
 ## Usage
 
@@ -74,135 +55,74 @@ if let note = result.notes.first, !note.isLocked {
 }
 ```
 
-### Notes and folders
+`search(_:)` returns notes newest first, 30 at a time by default.
+To get the next page, pass the result's `nextCursor` back in the request.
+A query matches titles, previews, and contents, ignoring case and diacritics.
+Matching contents means decoding each note,
+so a search looks at no more than `scanLimit` notes (1,000 by default)
+and returns a cursor if it stops early.
+Notes in Recently Deleted are left out unless you ask for them.
 
-`folders()` returns every folder except smart folders,
-with its account, its parent folder, and its number of notes.
-Recently Deleted is a folder, marked by `isRecentlyDeleted`.
+`content(for:)` returns paragraphs, each with a style and runs of formatted text.
+An attachment, such as a tag, an image, or a table, is a run with an `attachment`.
+Tables come with their cells decoded,
+so you can render a note without going back to the database.
+`fileURL(for:)` finds the file for an image or another attachment.
 
-`search(_:)` returns notes newest first, by modification date.
-Filters combine with AND.
-Without a folder filter, a search leaves out Recently Deleted
-unless `includesRecentlyDeleted` is `true`.
-Dates have an inclusive start and an exclusive end.
-The default limit is 30; the maximum is 100.
-Pass `nextCursor` from a result as the `cursor` of the next request to get the next page.
+Locked notes are listed, but TopoText doesn't read their contents.
 
-A query matches the title, the preview, and the contents,
-without regard to case or diacritics.
-The contents include the text of tags, mentions, links, tables, and link cards,
-attachment names, and the text that Notes recognizes in images and handwriting.
-Matching the contents means decoding each note,
-so a search examines at most `scanLimit` notes, 1,000 by default.
-If it reaches the limit before it finds `limit` matches,
-its `nextCursor` continues after the last note it examined.
-`unreadableNoteIDs` lists the notes whose contents could not be decoded,
-which the search matched by title and preview alone.
+Each call opens the database read-only and closes it before returning.
+TopoText never writes to the database or copies it.
+To make several reads from one consistent snapshot, use `withSnapshot(_:)`.
 
-Notes that the Notes app doesn't show are left out,
-such as drafts of Quick Notes and deleted notes that wait to sync.
-
-### Contents
-
-`content(for:)` returns a note's paragraphs.
-Each paragraph has a style (its kind, indent, checked state, starting number,
-block quote, and alignment) and runs of text with the same formatting
-(bold, italic, underline, strikethrough, superscript or subscript, highlight, color, and link).
-Each attachment is a run of one object replacement character (U+FFFC),
-with the attachment in the run's `attachment`.
-Attachments carry their kind, type identifier, display text, title, URL, file name,
-summary, recognized text, and, for a table, its cells as contents of their own.
-TopoText reads attachments while it reads the contents,
-so rendering the contents does not need the database.
-TopoText does not render Markdown or other formats.
-
-`fileURL(for:)` finds the file of an attachment, such as an image, in the Notes folder.
-
-Locked notes keep their contents encrypted.
-TopoText lists them, with a `nil` preview, but does not read their contents or files.
-
-Use `withSnapshot(_:)` to read several things from one snapshot of the database,
-such as a note and its folders.
-
-### Identifiers
-
-Notes, folders, accounts, and attachments have identifiers from the `ZIDENTIFIER` column.
-A note's identifier is a UUID that is the same on every device,
-and it is the one in `applenotes:note/<identifier>` links.
-`linkedNoteID` on a run or an inline link gives the identifier of the note that the link opens.
-Identifiers and cursors encode as strings in JSON.
-
-### Limits and cancellation
-
-`Store` runs one operation at a time on a private dispatch queue.
-Each operation opens a read-only connection and closes it before it returns.
-TopoText never writes to the database, copies it, or changes its journal mode.
-An operation holds a read transaction, which can delay the WAL checkpoints of Notes,
-so each operation stops after `Configuration.timeLimit`, 10 seconds by default,
-with `NotesError.timedOut`.
-Canceling the calling task stops the operation.
-
-### Development
-
-Run the tests and the formatter from the repository root:
+## Development
 
 ```sh
 swift test
 swift format lint --strict --recursive .
 ```
 
-The tests use synthetic databases and do not need access to the Notes folder.
-They include a port of iMCP's Markdown renderer to check that the contents carry what it needs.
+The tests build synthetic databases, so they don't need access to your notes.
 
-The `Validate` tool reads a real Notes database and prints only aggregate counts,
-such as the number of notes whose contents fail to decode,
-without titles, text, or identifiers:
+To check TopoText against your own notes, run:
 
 ```sh
-swift run Validate [<path to group.com.apple.notes>] [--applescript]
+swift run Validate --applescript
 ```
 
-The process that runs it needs access to the Notes folder.
-With `--applescript`, it also asks Notes for its count of notes, to compare with the count that TopoText lists.
-In a debug build, which `swift run` makes, it also counts the stored fields and values behind the decoded contents.
+The tool prints only counts, never titles or text,
+and compares its count of notes with the one from AppleScript.
+Your terminal needs Full Disk Access to run it.
 
-See [Documentation/NoteStore.md](Documentation/NoteStore.md) for the format and the sources of each fact.
+The [format notes](Sources/TopoText/TopoText.docc/NoteStore.md)
+describe the database and where each fact comes from.
 
 ## Acknowledgments
 
-TopoText relies on the reverse engineering of the Notes format in
+TopoText builds on the reverse engineering in
 Jon Baumann's [apple_cloud_notes_parser](https://github.com/threeplanetssoftware/apple_cloud_notes_parser),
-for the note protocol buffer and the database schema across releases,
+which worked out the note format and the database schema across releases,
 and Steve Dunham's [notesutils](https://github.com/dunhamsteve/notesutils),
-for the table CRDT, including how deleted and repeated rows and columns are left out.
+which worked out how tables are stored.
 
-These later projects contributed specific facts that TopoText relies on:
+These projects contributed specific findings:
 
-- sweetrb's [apple-notes-mcp](https://github.com/sweetrb/apple-notes-mcp),
-  from its checks against a live macOS 27 database:
-  that drafts of Quick Notes have no folder,
-  that Recently Deleted is a folder whose identifier starts with `TrashFolder`
-  while rows marked for deletion are already deleted,
-  that the newest `ZICNOTEDATA` row holds a note's current contents,
-  and that the run covering a paragraph's first character sets its style.
-- mgcrea's [cupertino](https://github.com/mgcrea/cupertino),
-  from its measurements on macOS 26:
-  that requiring a title makes the listed notes match the count from Apple Events,
-  and that some `ZICNOTEDATA` rows hold property lists rather than note contents.
+- sweetrb's [apple-notes-mcp](https://github.com/sweetrb/apple-notes-mcp):
+  how Notes marks Quick Note drafts and deleted notes,
+  which contents row is current, and which run sets a paragraph's style
+- mgcrea's [cupertino](https://github.com/mgcrea/cupertino):
+  the title check that makes the note count match Notes,
+  and contents rows that hold property lists
 - sballin's [alfred-search-notes-app](https://github.com/sballin/alfred-search-notes-app):
-  that folders not yet fetched from iCloud should be left out,
-  and that a search should include table summaries, tags,
-  and the text that Notes recognizes in images and handwriting.
+  folders not yet fetched from iCloud, and what a search should cover
 - [Obsidian Importer](https://github.com/obsidianmd/obsidian-importer):
-  the order of the creation date columns across releases,
-  and how links to other notes name their targets.
+  the creation date columns, and links between notes
 - folivoraAI's [BetterTouchTool plugin for Notes](https://github.com/folivoraAI/BetterTouchToolPlugins):
-  the starting number of numbered lists.
+  the starting number of numbered lists
 - 6over3's [NotesKit](https://github.com/6over3/NotesKit):
-  following register indirection in tables.
+  following indirection in tables
 
 TopoText contains no code from these projects.
-[Documentation/NoteStore.md](Documentation/NoteStore.md) lists the source of each fact.
 
 ## License
 
