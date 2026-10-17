@@ -17,6 +17,10 @@ let package = Package(
         .target(
             name: "TopoText",
             dependencies: []
-        )
+        ),
+        .testTarget(
+            name: "TopoTextTests",
+            dependencies: ["TopoText"]
+        ),
     ]
 )
