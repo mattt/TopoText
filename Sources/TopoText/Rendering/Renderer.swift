@@ -45,7 +45,8 @@ struct Renderer {
                 let cells = cells.map {
                     Self.escaped($0)
                         .replacingOccurrences(of: "|", with: "\\|")
-                        .replacingOccurrences(of: "\n", with: "<br>")
+                        .split(omittingEmptySubsequences: false, whereSeparator: Self.isLineBreak)
+                        .joined(separator: "<br>")
                 }
                 return "| " + cells.joined(separator: " | ") + " |"
             }
@@ -81,7 +82,7 @@ struct Renderer {
                 guard let summary = attachment.summary else { return "[Table]" }
                 guard format == .markdown else { return summary }
                 // The summary holds the table's text, so it's escaped as the note's text is, line by line.
-                return summary.split(separator: "\n", omittingEmptySubsequences: false)
+                return summary.split(omittingEmptySubsequences: false, whereSeparator: Self.isLineBreak)
                     .map { Self.escapingLineStart(Substring(Self.escaped(String($0)))) }
                     .joined(separator: "\n")
             }
@@ -188,7 +189,7 @@ struct Renderer {
             }
 
             let content = inlineMarkdown(paragraph.runs)
-                .split(separator: "\u{2028}", omittingEmptySubsequences: false)
+                .split(omittingEmptySubsequences: false, whereSeparator: Self.isLineBreak)
                 .map(Self.escapingLineStart)
                 .joined(separator: "\u{2028}")
             var prefix: String
@@ -279,10 +280,16 @@ struct Renderer {
         }.joined()
     }
 
-    /// Whether a character is a space, a tab, or a line separator (U+2028),
+    /// Whether a character is a space, a tab, or a line break,
     /// which can't come right inside an emphasis marker.
     private static func isSpace(_ character: Character) -> Bool {
-        character == "\u{2028}" || character.unicodeScalars.allSatisfy { CharacterSet.whitespaces.contains($0) }
+        isLineBreak(character) || character.unicodeScalars.allSatisfy { CharacterSet.whitespaces.contains($0) }
+    }
+
+    /// Whether a character breaks a line: a line separator (U+2028), which Notes uses within a paragraph,
+    /// or a line ending that Markdown recognizes (LF, CR, or CRLF, which Swift reads as one character).
+    private static func isLineBreak(_ character: Character) -> Bool {
+        character == "\u{2028}" || character == "\n" || character == "\r" || character == "\r\n"
     }
 
     /// Escapes the characters that Markdown reads as emphasis, code, links, HTML,

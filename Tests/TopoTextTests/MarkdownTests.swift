@@ -65,6 +65,11 @@ import TopoText
         )
     }
 
+    @Test("Markers after a carriage return or CRLF are escaped, and the line ends become line feeds")
+    func escapesLineStartAfterCarriageReturns() {
+        #expect(markdown([paragraph("Intro\r# not a heading\r\n- not an item")]) == "Intro\n\\# not a heading\n\\- not an item")
+    }
+
     @Test("Text that only resembles a marker is left as it is")
     func leavesTextThatOnlyResemblesMarkers() {
         let lines = ["#hashtag", "####### seven", "-5 degrees", "1.5 cups", "1234567890. too long", "--- and more"]
@@ -191,10 +196,10 @@ import TopoText
         #expect(markdown([Note.Paragraph(runs: [Note.TextRun(text: "x \t", isItalic: true)])]) == "*x* \t")
     }
 
-    @Test("A line separator at the edge of a run stays outside its markers")
-    func keepsLineSeparatorsOutsideMarkers() {
+    @Test("A line break at the edge of a run stays outside its markers", arguments: ["\u{2028}", "\r", "\r\n"])
+    func keepsLineBreaksOutsideMarkers(lineBreak: String) {
         let paragraph = Note.Paragraph(runs: [
-            Note.TextRun(text: "bold\u{2028}", isBold: true),
+            Note.TextRun(text: "bold" + lineBreak, isBold: true),
             Note.TextRun(text: "next"),
         ])
         #expect(markdown([paragraph]) == "**bold**\nnext")
@@ -501,6 +506,12 @@ import TopoText
         )
     }
 
+    @Test("Every kind of line break in a cell becomes a break tag, so the row stays on one line")
+    func joinsCellLinesWithBreakTags() {
+        let content = Note.Content(paragraphs: [paragraph("a\rb\r\nc\u{2028}d")])
+        #expect(markdown([tableParagraph(Note.Table(rows: [[content]]))]) == "| a<br>b<br>c<br>d |\n| --- |")
+    }
+
     @Test("Backslashes in cells are escaped")
     func escapesBackslashesInCells() {
         #expect(markdown([tableParagraph(Note.Table(rows: [[cell(#"a\b"#)]]))]) == #"| a\\b |"# + "\n| --- |")
@@ -535,11 +546,12 @@ import TopoText
         #expect(markdown([Note.Paragraph(runs: [bare])]) == "[Table]")
     }
 
-    @Test("A table's summary is escaped as the note's text is, line by line")
-    func escapesTableSummaries() {
-        let summarized = attachmentRun(type: "com.apple.notes.table", summary: "&copy; *literal*\n# Title\n- item")
+    @Test("A table's summary is escaped as the note's text is, line by line, whatever its line endings", arguments: ["\n", "\r\n", "\r"])
+    func escapesTableSummaries(lineEnding: String) {
+        let summary = ["&copy; *literal*", "# Title", "- item"].joined(separator: lineEnding)
+        let summarized = attachmentRun(type: "com.apple.notes.table", summary: summary)
         #expect(markdown([Note.Paragraph(runs: [summarized])]) == #"\&copy; \*literal\*"# + "\n" + ##"\# Title"## + "\n" + #"\- item"#)
-        #expect(plainText([Note.Paragraph(runs: [summarized])]) == "&copy; *literal*\n# Title\n- item")
+        #expect(plainText([Note.Paragraph(runs: [summarized])]) == summary)
     }
 
     // MARK: - Links and attachments
