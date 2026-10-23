@@ -12,7 +12,7 @@ import Testing
 
     /// The plain text of each cell.
     func cells(_ data: Data) throws -> [[String]] {
-        try #require(try table(data)).rows.map { $0.map { Renderer(format: .plain).render($0) } }
+        try #require(try table(data)).rows.map { $0.map { $0.plainText() } }
     }
 
     @Test("Cells come out row by row")
@@ -39,7 +39,7 @@ import Testing
     func rightToLeft() throws {
         let table = try #require(try table(tableData([["A", "B"], ["1", "2"]], rightToLeft: true)))
         #expect(table.isRightToLeft)
-        #expect(table.rows.map { $0.map { Renderer(format: .plain).render($0) } } == [["B", "A"], ["2", "1"]])
+        #expect(table.rows.map { $0.map { $0.plainText() } } == [["B", "A"], ["2", "1"]])
         #expect(try #require(try self.table(tableData([["A"]]))).isRightToLeft == false)
     }
 

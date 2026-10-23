@@ -33,7 +33,7 @@ Then add `.product(name: "TopoText", package: "TopoText")` to your target's depe
 ```swift
 import TopoText
 
-let store = Store()  // ~/Library/Group Containers/group.com.apple.notes
+let store = TopoText.Store()  // ~/Library/Group Containers/group.com.apple.notes
 try await store.checkAccess()
 
 let folders = try await store.folders()
@@ -44,14 +44,7 @@ for note in result.notes {
 
 if let note = result.notes.first, !note.isLocked {
     let content = try await store.content(for: note.id)
-    for paragraph in content.paragraphs {
-        switch paragraph.style.kind {
-        case .checklist:
-            print(paragraph.style.isChecked ? "[x]" : "[ ]", paragraph.text)
-        default:
-            print(paragraph.text)
-        }
-    }
+    print(content.markdown())
 }
 ```
 
@@ -68,6 +61,15 @@ An attachment, such as a tag, an image, or a table, is a run with an `attachment
 Tables come with their cells decoded,
 so you can render a note without going back to the database.
 `fileURL(for:)` finds the file for an image or another attachment.
+
+`markdown()` renders contents as Markdown,
+with headings, lists, checklists, code blocks, block quotes, links, and tables.
+It escapes literal text, so that it renders as it appears in the note,
+and leaves out formatting that Markdown can't express, such as underlining and highlights.
+`plainText()` renders the text alone, without formatting.
+In both, attachments become text:
+a tag becomes its text, a link card becomes its title and URL,
+and an image or another file becomes a description, such as `[Image: IMG_0001.jpeg]`.
 
 Locked notes are listed, but TopoText doesn't read their contents.
 
