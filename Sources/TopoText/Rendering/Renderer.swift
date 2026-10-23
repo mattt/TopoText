@@ -158,6 +158,8 @@ struct Renderer {
         for paragraph in paragraphs {
             let style = paragraph.style
             if style.kind == .monospaced {
+                // A code block ends any list, as other paragraphs do.
+                numbers = [:]
                 code.append(paragraph.runs.map { plainText($0, escaping: false) }.joined())
                 continue
             }

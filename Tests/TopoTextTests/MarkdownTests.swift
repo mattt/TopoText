@@ -233,6 +233,16 @@ import TopoText
         #expect(markdown([paragraph("a", .numberedList), emptyParagraph(), paragraph("b", .numberedList)]) == "1. a\n\n1. b")
     }
 
+    @Test("Numbering restarts after a code block")
+    func restartsNumberingAfterCodeBlocks() {
+        let content = [
+            paragraph("a", .numberedList),
+            paragraph("x", .monospaced),
+            paragraph("b", .numberedList),
+        ]
+        #expect(markdown(content) == "1. a\n\n```\nx\n```\n\n1. b")
+    }
+
     @Test("Numbering restarts after a list item of another kind at the same level")
     func restartsNumberingAfterOtherListKinds() {
         let content = [
