@@ -249,13 +249,14 @@ struct Renderer {
             if run.attachment != nil {
                 return text
             }
-            let core = text.trimmingCharacters(in: .whitespaces)
-            guard !core.isEmpty else { return text }
-            // Markers must touch the text they enclose, so surrounding spaces stay outside.
-            let leading = String(text.prefix { $0 == " " || $0 == "\t" })
-            let trailing = String(text.reversed().prefix { $0 == " " || $0 == "\t" })
+            // Markers must touch the text they enclose,
+            // so the spaces and line separators at either end stay outside them.
+            let leading = text.prefix(while: Self.isSpace)
+            guard leading.endIndex < text.endIndex else { return text }
+            let trailing = text[leading.endIndex...].reversed().prefix(while: Self.isSpace).reversed()
+            let core = text[leading.endIndex...].dropLast(trailing.count)
 
-            var formatted = Self.escaped(core)
+            var formatted = Self.escaped(String(core))
             if run.isStrikethrough {
                 formatted = "~~\(formatted)~~"
             }
@@ -268,8 +269,14 @@ struct Renderer {
             if let link = run.link {
                 formatted = "[\(formatted)](\(link))"
             }
-            return leading + formatted + trailing
+            return leading + formatted + String(trailing)
         }.joined()
+    }
+
+    /// Whether a character is a space, a tab, or a line separator (U+2028),
+    /// which can't come right inside an emphasis marker.
+    private static func isSpace(_ character: Character) -> Bool {
+        character == "\u{2028}" || character.unicodeScalars.allSatisfy { CharacterSet.whitespaces.contains($0) }
     }
 
     /// Escapes the characters that Markdown reads as emphasis, code, links, or HTML,

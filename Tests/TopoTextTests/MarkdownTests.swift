@@ -130,6 +130,30 @@ import TopoText
         #expect(markdown([Note.Paragraph(runs: [Note.TextRun(text: "\tx\t", isItalic: true)])]) == "\t*x*\t")
     }
 
+    @Test("Nonbreaking and other Unicode spaces at the edges of a run stay outside its markers")
+    func keepsUnicodeSpacesOutsideMarkers() {
+        let paragraph = Note.Paragraph(runs: [
+            Note.TextRun(text: "10\u{00A0}", isBold: true),
+            Note.TextRun(text: "kg and"),
+            Note.TextRun(text: "\u{2003}wide", isItalic: true),
+        ])
+        #expect(markdown([paragraph]) == "**10**\u{00A0}kg and\u{2003}*wide*")
+    }
+
+    @Test("Mixed spaces at the end of a run keep their order")
+    func keepsOrderOfTrailingSpaces() {
+        #expect(markdown([Note.Paragraph(runs: [Note.TextRun(text: "x \t", isItalic: true)])]) == "*x* \t")
+    }
+
+    @Test("A line separator at the edge of a run stays outside its markers")
+    func keepsLineSeparatorsOutsideMarkers() {
+        let paragraph = Note.Paragraph(runs: [
+            Note.TextRun(text: "bold\u{2028}", isBold: true),
+            Note.TextRun(text: "next"),
+        ])
+        #expect(markdown([paragraph]) == "**bold**\nnext")
+    }
+
     @Test("Formatting without a Markdown form is left out")
     func dropsFormattingWithoutMarkdownForm() {
         let run = Note.TextRun(
