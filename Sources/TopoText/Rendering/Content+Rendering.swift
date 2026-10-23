@@ -12,13 +12,16 @@ extension Note.Content {
     /// Numbered lists count from ``Note/ParagraphStyle/startingNumber`` when Notes records one.
     /// A blank line separates blocks of different kinds, such as a list and the text after it,
     /// and surrounds each heading, code block, and table.
-    /// A line separator (U+2028) breaks the line within its paragraph.
+    /// A line separator (U+2028) breaks the line within its paragraph,
+    /// except in a heading, which can't span lines, where it becomes a space.
     ///
     /// Bold, italic, and struck-through text and links become Markdown emphasis and links.
     /// Underlining, highlights, colors, superscript, subscript, and alignment
     /// have no Markdown form and are left out.
-    /// Literal text is escaped, so that characters such as `*` and line starts such as `1.`
-    /// render as they appear in the note.
+    /// Literal text is escaped, so that characters such as `*`, line starts such as `1.`,
+    /// and text such as `&amp;` render as they appear in the note.
+    /// A link's target keeps every character:
+    /// spaces are percent-encoded, and characters such as parentheses are escaped.
     ///
     /// Each attachment becomes text:
     /// a tag, mention, or calculation result becomes the text that Notes shows;
