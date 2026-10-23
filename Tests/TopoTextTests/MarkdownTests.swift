@@ -117,6 +117,35 @@ import TopoText
         #expect(markdown([paragraph]) == "[a](https://a.example)[b](https://b.example)")
     }
 
+    @Test("Link targets keep every character as the link's destination")
+    func escapesLinkDestinations() {
+        let targets = [
+            "https://example.com/a)b",
+            "https://en.wikipedia.org/wiki/Swift_(programming_language)",
+            "https://example.com/a b",
+            "https://example.com/?q=<x>&copy;&a=1&b=2",
+            #"C:\Notes\file"#,
+        ]
+        #expect(
+            markdown(targets.map { Note.Paragraph(runs: [Note.TextRun(text: "x", link: $0)]) })
+                == [
+                    #"[x](https://example.com/a\)b)"#,
+                    #"[x](https://en.wikipedia.org/wiki/Swift_\(programming_language\))"#,
+                    "[x](https://example.com/a%20b)",
+                    #"[x](https://example.com/?q=\<x\>\&copy;&a=1&b=2)"#,
+                    #"[x](C:\\Notes\\file)"#,
+                ].joined(separator: "\n")
+        )
+    }
+
+    @Test("Link cards and links to notes format their targets the same way")
+    func escapesAttachmentLinkDestinations() {
+        let card = attachmentRun(type: "public.url", title: "Card", url: URL(string: "https://example.com/a%29b(c"))
+        let noteLink = attachmentRun(type: inlineType("link"), displayText: "Note", tokenIdentifier: "applenotes:note/A B)")
+        #expect(markdown([Note.Paragraph(runs: [card])]) == #"[Card](https://example.com/a%29b\(c)"#)
+        #expect(markdown([Note.Paragraph(runs: [noteLink])]) == #"[Note](applenotes:note/A%20B\))"#)
+    }
+
     @Test("Formatted text is escaped inside its markers")
     func escapesFormattedText() {
         #expect(markdown([Note.Paragraph(runs: [Note.TextRun(text: "a*b", isBold: true)])]) == #"**a\*b**"#)

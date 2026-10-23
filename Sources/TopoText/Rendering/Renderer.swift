@@ -62,7 +62,7 @@ struct Renderer {
         }
         if attachment.kind == .webLink, let url = attachment.url?.absoluteString {
             switch format {
-            case .markdown: return "[\(escape(attachment.title ?? url))](\(url))"
+            case .markdown: return "[\(escape(attachment.title ?? url))](\(Self.destination(url)))"
             case .plain: return attachment.title.map { "\($0) (\(url))" } ?? url
             }
         }
@@ -74,7 +74,7 @@ struct Renderer {
             if format == .markdown, attachment.kind == .noteLink, let target = attachment.tokenIdentifier,
                 !text.isEmpty
             {
-                return "[\(escape(text))](\(target))"
+                return "[\(escape(text))](\(Self.destination(target)))"
             }
             return escape(text)
         case .table:
@@ -267,7 +267,7 @@ struct Renderer {
             case (false, false): break
             }
             if let link = run.link {
-                formatted = "[\(formatted)](\(link))"
+                formatted = "[\(formatted)](\(Self.destination(link)))"
             }
             return leading + formatted + String(trailing)
         }.joined()
@@ -301,6 +301,29 @@ struct Renderer {
         text.range(of: #"^&(#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});"#, options: .regularExpression)
             != nil
     }
+
+    /// Formats a link's target so that Markdown reads all of it as the destination.
+    ///
+    /// Spaces and control characters, which would end the destination, are percent-encoded.
+    /// Parentheses, angle brackets, and backslashes are escaped, as are character references,
+    /// so that the destination keeps every character of the target.
+    private static func destination(_ target: String) -> String {
+        let encoded = target.addingPercentEncoding(withAllowedCharacters: destinationCharacters) ?? target
+        var result = ""
+        var index = encoded.startIndex
+        while index < encoded.endIndex {
+            let character = encoded[index]
+            if "\\()<>".contains(character) || (character == "&" && startsCharacterReference(encoded[index...])) {
+                result.append("\\")
+            }
+            result.append(character)
+            index = encoded.index(after: index)
+        }
+        return result
+    }
+
+    /// The characters that a link destination can hold without percent encoding.
+    private static let destinationCharacters = CharacterSet.whitespacesAndNewlines.union(.controlCharacters).inverted
 
     /// Escapes the start of a line that Markdown would read as a heading, list item,
     /// or rule, such as `# Groceries`, `+ milk`, `1. eggs`, or `---`.
