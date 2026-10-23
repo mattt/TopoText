@@ -535,6 +535,13 @@ import TopoText
         #expect(markdown([Note.Paragraph(runs: [bare])]) == "[Table]")
     }
 
+    @Test("A table's summary is escaped as the note's text is, line by line")
+    func escapesTableSummaries() {
+        let summarized = attachmentRun(type: "com.apple.notes.table", summary: "&copy; *literal*\n# Title\n- item")
+        #expect(markdown([Note.Paragraph(runs: [summarized])]) == #"\&copy; \*literal\*"# + "\n" + ##"\# Title"## + "\n" + #"\- item"#)
+        #expect(plainText([Note.Paragraph(runs: [summarized])]) == "&copy; *literal*\n# Title\n- item")
+    }
+
     // MARK: - Links and attachments
 
     @Test("Link cards are links, titled when they have a title")

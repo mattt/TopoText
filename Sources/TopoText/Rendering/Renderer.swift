@@ -78,7 +78,12 @@ struct Renderer {
             return escape(text)
         case .table:
             guard let table = attachment.table else {
-                return attachment.summary ?? "[Table]"
+                guard let summary = attachment.summary else { return "[Table]" }
+                guard format == .markdown else { return summary }
+                // The summary holds the table's text, so it's escaped as the note's text is, line by line.
+                return summary.split(separator: "\n", omittingEmptySubsequences: false)
+                    .map { Self.escapingLineStart(Substring(Self.escaped(String($0)))) }
+                    .joined(separator: "\n")
             }
             return render(table)
         default:
