@@ -54,11 +54,10 @@ struct Renderer {
         }
     }
 
-    /// The text that stands in for an attachment.
-    /// In Markdown, its text is escaped unless `escaping` is `false`, as in code blocks.
-    private func text(for attachment: Note.Attachment, escaping: Bool = true) -> String {
+    /// The text that stands in for an attachment, with its text escaped in Markdown.
+    private func text(for attachment: Note.Attachment) -> String {
         func escape(_ text: String) -> String {
-            format == .markdown && escaping ? Self.escaped(text) : text
+            format == .markdown ? Self.escaped(text) : text
         }
         if attachment.kind == .webLink, let url = attachment.url?.absoluteString {
             switch format {
@@ -101,9 +100,9 @@ struct Renderer {
         }
     }
 
-    private func plainText(_ run: Note.TextRun, escaping: Bool = true) -> String {
+    private func plainText(_ run: Note.TextRun) -> String {
         if let attachment = run.attachment {
-            return text(for: attachment, escaping: escaping)
+            return text(for: attachment)
         }
         return run.text.replacingOccurrences(of: "\u{FFFC}", with: "")
     }
@@ -123,6 +122,8 @@ struct Renderer {
         var code: [String] = []
         // The last number used in a numbered list, by indent level.
         var numbers: [Int: Int] = [:]
+        // Code blocks show their contents as they are, so their attachments are plain text.
+        let literal = Renderer(format: .plain)
 
         // Adds lines, with a blank line before them when they start a different kind
         // of block, so that each renders on its own.
@@ -160,7 +161,7 @@ struct Renderer {
             if style.kind == .monospaced {
                 // A code block ends any list, as other paragraphs do.
                 numbers = [:]
-                code.append(paragraph.runs.map { plainText($0, escaping: false) }.joined())
+                code.append(paragraph.runs.map { literal.plainText($0) }.joined())
                 continue
             }
             emitCode()

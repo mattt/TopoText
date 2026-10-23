@@ -414,6 +414,23 @@ import TopoText
         #expect(markdown([paragraph]) == "```\ntag: #to_do\n```")
     }
 
+    @Test("Links and tables in code are plain text, without Markdown syntax or escapes")
+    func rendersAttachmentsInCodeAsPlainText() {
+        let card = attachmentRun(type: "public.url", title: "Card", url: URL(string: "https://example.com/a)b"))
+        let noteLink = attachmentRun(type: inlineType("link"), displayText: "Note", tokenIdentifier: "applenotes:note/X?a=(1)&copy;")
+        let table = attachmentRun(type: "com.apple.notes.table", table: Note.Table(rows: [[cell("a|b"), cell("*x*")], [cell("1"), cell("2")]]))
+        let summarized = attachmentRun(type: "com.apple.notes.table", summary: "&copy; *literal*")
+        let content = [
+            Note.Paragraph(
+                style: Note.ParagraphStyle(kind: .monospaced),
+                runs: [Note.TextRun(text: "see "), card, Note.TextRun(text: " and "), noteLink]
+            ),
+            Note.Paragraph(style: Note.ParagraphStyle(kind: .monospaced), runs: [table]),
+            Note.Paragraph(style: Note.ParagraphStyle(kind: .monospaced), runs: [summarized]),
+        ]
+        #expect(markdown(content) == "```\nsee Card (https://example.com/a)b) and Note\na|b\t*x*\n1\t2\n&copy; *literal*\n```")
+    }
+
     @Test("Formatting in code is left out")
     func dropsFormattingInCode() {
         let paragraph = Note.Paragraph(

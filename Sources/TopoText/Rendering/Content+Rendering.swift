@@ -20,6 +20,7 @@ extension Note.Content {
     /// have no Markdown form and are left out.
     /// Literal text is escaped, so that characters such as `*`, line starts such as `1.`,
     /// and text such as `&amp;` render as they appear in the note.
+    /// Text in a code block isn't escaped, and its attachments become text as in ``plainText()``.
     /// A link's target keeps every character:
     /// spaces are percent-encoded, and characters such as parentheses are escaped.
     ///
