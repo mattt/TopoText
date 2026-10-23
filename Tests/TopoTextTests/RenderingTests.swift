@@ -2,16 +2,15 @@
 import Foundation
 import Testing
 
-/// Checks that the content model reproduces iMCP's Markdown and plain-text output exactly,
-/// through the port of iMCP's renderer in `Helpers/Renderer.swift`.
+/// Renders notes decoded from a synthetic database, from the protocol buffer to Markdown and plain text.
 @Suite struct RenderingTests {
-    @Test("A note with every style renders as iMCP renders it")
+    @Test("A note with every style renders as Markdown and plain text")
     func groceries() async throws {
         let folder = try NotesFolder.current()
         let content = try await Store(root: folder.root).content(for: .id("NOTE-GROCERIES"))
 
         #expect(
-            Renderer(format: .markdown).render(content) == """
+            content.markdown() == """
                 # Groceries
 
                 Plain **bold** and *italic* ***both*** 😀 ~~struck~~ [a link](https://example.com)
@@ -49,7 +48,7 @@ import Testing
                 """
         )
         #expect(
-            Renderer(format: .plain).render(content) == """
+            content.plainText() == """
                 Groceries
                 Plain bold and italic both 😀 struck a link
                 Section
@@ -76,12 +75,12 @@ import Testing
         )
     }
 
-    @Test("Tables, summaries, and missing attachments render as iMCP renders them")
+    @Test("Tables, summaries, and missing attachments render as Markdown")
     func tables() async throws {
         let folder = try NotesFolder.current()
         let content = try await Store(root: folder.root).content(for: .id("NOTE-TABLES"))
         #expect(
-            Renderer(format: .markdown).render(content) == """
+            content.markdown() == """
                 # Tables
 
                 | Tag | Pipe |
@@ -95,7 +94,7 @@ import Testing
         )
     }
 
-    @Test("Paragraph styles, line separators, starting numbers, and fences render as iMCP renders them")
+    @Test("Paragraph styles, line separators, starting numbers, and fences render as Markdown")
     func paragraphStyles() throws {
         let content = try content([
             RunSpec(text: "Start\n"),
@@ -110,7 +109,7 @@ import Testing
             RunSpec(text: "a ```` b", style: 4),
         ])
         #expect(
-            Renderer(format: .markdown).render(content) == """
+            content.markdown() == """
                 Start
 
                 3. Three
@@ -133,7 +132,7 @@ import Testing
                 """
         )
         #expect(
-            Renderer(format: .plain).render(content) == "Start\nThree\nFour\nLine one\nline two\n\nBody\nmore\nHead\ning\nSaid\nthis\na ```` b"
+            content.plainText() == "Start\nThree\nFour\nLine one\nline two\n\nBody\nmore\nHead\ning\nSaid\nthis\na ```` b"
         )
     }
 
@@ -151,6 +150,6 @@ import Testing
 
     @Test("Short and unformatted contents render as is")
     func short() throws {
-        #expect(Renderer(format: .markdown).render(try content([RunSpec(text: "Hi")])) == "Hi")
+        #expect(try content([RunSpec(text: "Hi")]).markdown() == "Hi")
     }
 }

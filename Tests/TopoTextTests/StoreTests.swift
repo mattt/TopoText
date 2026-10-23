@@ -383,7 +383,7 @@ final class Leak<Value>: @unchecked Sendable {
         #expect(result.notes[0].creationDate == Date(timeIntervalSinceReferenceDate: 600_000_000))
         #expect(result.notes[0].snippet == "Old snippet")
         let content = try await store.content(for: .id("OLD-NOTE"))
-        #expect(Renderer(format: .markdown).render(content) == "# Old note\n\n| A | B |\n| --- | --- |")
+        #expect(content.markdown() == "# Old note\n\n| A | B |\n| --- | --- |")
     }
 
     @Test("Cursors work without database metadata")
