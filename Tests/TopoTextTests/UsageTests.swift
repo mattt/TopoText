@@ -12,7 +12,7 @@ import Testing
             lines.append(items.map { "\($0)" }.joined(separator: " "))
         }
 
-        let store = Store(root: folder.root)
+        let store = TopoText.Store(root: folder.root)
         try await store.checkAccess()
 
         let folders = try await store.folders()
@@ -23,19 +23,12 @@ import Testing
 
         if let note = result.notes.first, !note.isLocked {
             let content = try await store.content(for: note.id)
-            for paragraph in content.paragraphs {
-                switch paragraph.style.kind {
-                case .checklist:
-                    print(paragraph.style.isChecked ? "[x]" : "[ ]", paragraph.text)
-                default:
-                    print(paragraph.text)
-                }
-            }
+            print(content.markdown())
         }
 
         #expect(folders.count == 4)
         #expect(lines.first?.hasPrefix("NOTE-GROCERIES Groceries ") == true)
-        #expect(lines.contains("[x] Milk"))
-        #expect(lines.contains("[ ] Eggs"))
+        #expect(lines.last?.hasPrefix("# Groceries\n") == true)
+        #expect(lines.last?.contains("\n- [x] Milk\n- [ ] Eggs\n") == true)
     }
 }
