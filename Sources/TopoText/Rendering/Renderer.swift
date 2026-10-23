@@ -279,17 +279,27 @@ struct Renderer {
         character == "\u{2028}" || character.unicodeScalars.allSatisfy { CharacterSet.whitespaces.contains($0) }
     }
 
-    /// Escapes the characters that Markdown reads as emphasis, code, links, or HTML,
-    /// so that literal text renders as it appears in the note.
+    /// Escapes the characters that Markdown reads as emphasis, code, links, HTML,
+    /// or character references, so that literal text renders as it appears in the note.
     private static func escaped(_ text: String) -> String {
         var result = ""
-        for character in text {
-            if "\\`*_~[]<>".contains(character) {
+        var index = text.startIndex
+        while index < text.endIndex {
+            let character = text[index]
+            if "\\`*_~[]<>".contains(character) || (character == "&" && startsCharacterReference(text[index...])) {
                 result.append("\\")
             }
             result.append(character)
+            index = text.index(after: index)
         }
         return result
+    }
+
+    /// Whether text starts with what Markdown would read as a character reference,
+    /// such as `&amp;`, `&#169;`, or `&#xA9;`, and show as the character it names.
+    private static func startsCharacterReference(_ text: Substring) -> Bool {
+        text.range(of: #"^&(#[0-9]{1,7}|#[xX][0-9A-Fa-f]{1,6}|[A-Za-z][A-Za-z0-9]{1,31});"#, options: .regularExpression)
+            != nil
     }
 
     /// Escapes the start of a line that Markdown would read as a heading, list item,

@@ -19,6 +19,23 @@ import TopoText
         #expect(markdown([paragraph(#"C:\Users"#)]) == #"C:\\Users"#)
     }
 
+    @Test("Text that Markdown would read as a character reference is escaped")
+    func escapesCharacterReferences() {
+        #expect(
+            markdown([paragraph("Tom &amp; Jerry &copy; &#169; &#xA9; & more, AT&T, &;, and &#;")])
+                == #"Tom \&amp; Jerry \&copy; \&#169; \&#xA9; & more, AT&T, &;, and &#;"#
+        )
+    }
+
+    @Test("Character references are escaped in cells and attachment text, but not in code")
+    func escapesCharacterReferencesOutsideCode() {
+        let tag = attachmentRun(type: inlineType("hashtag"), displayText: "#a&amp;b")
+        #expect(markdown([Note.Paragraph(runs: [tag])]) == #"#a\&amp;b"#)
+        #expect(markdown([tableParagraph(Note.Table(rows: [[cell("&lt;")]]))]) == #"| \&lt; |"# + "\n| --- |")
+        #expect(markdown([paragraph("&amp;", .monospaced)]) == "```\n&amp;\n```")
+        #expect(plainText([paragraph("&amp;")]) == "&amp;")
+    }
+
     @Test("Pipes and hashes within a line are left as they are")
     func leavesPipesAndHashesWithinLines() {
         #expect(markdown([paragraph("a | b # c")]) == "a | b # c")
