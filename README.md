@@ -56,6 +56,10 @@ so a search looks at no more than `scanLimit` notes (1,000 by default)
 and returns a cursor if it stops early.
 Notes in Recently Deleted are left out unless you ask for them.
 
+`smartFolders()` lists smart folders with their stored queries.
+`tags(for:)`, `tags()`, `links(from:)`, and `backlinks(to:)` read tags and links to other notes
+straight from the database, without decoding any contents.
+
 `content(for:)` returns paragraphs, each with a style and runs of formatted text.
 An attachment, such as a tag, an image, or a table, is a run with an `attachment`.
 Tables come with their cells decoded,

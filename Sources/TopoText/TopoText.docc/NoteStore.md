@@ -182,6 +182,15 @@ Inline attachments (`ICInlineAttachment`) have types that start with
   The link can carry the note's identifier in lowercase, and OBS uppercases it to find the note.
 - `.calculateresult` and `.calculategraphexpression`: `ZALTTEXT` is the text.
 
+Without decoding any contents, `Store.tags(for:)`, `Store.tags()`, `Store.links(from:)`,
+and `Store.backlinks(to:)` read these rows (`ICInlineAttachment`, found by the entity name),
+joined to their note through `COALESCE(ZNOTE1, ZNOTE)`.
+They skip rows with `ZMARKEDFORDELETION`, and rows of locked notes and of Recently Deleted.
+A row of an attachment that was deleted from the text can remain until Notes removes it,
+so these counts follow the rows, not the text; `content(for:)` is exact.
+Tags that differ only in case or diacritics are one tag.
+The type is the one in `ZTYPEUTI1` (OBS, sweetrb); the behavior of lingering rows is unverified.
+
 Other attachments (`ICAttachment`):
 
 - `ZTITLE` (then `ZUSERTITLE`), `ZURLSTRING`, `ZSUMMARY`,
@@ -304,3 +313,11 @@ A run on macOS 27 found the following:
 - **Shared notes.** `ZSERVERSHAREDATA` on the note or a parent folder marks a shared note (sweetrb).
 - **Smart folder queries** in `ZSMARTFOLDERQUERYJSON`.
 - **AppleScript identifiers**, `x-coredata://<Z_METADATA.Z_UUID>/ICNote/p<Z_PK>` (ALF; BTT).
+
+## Smart folders
+
+A smart folder is an `ICFolder` row with a query in `ZSMARTFOLDERQUERYJSON`
+(the `ZFOLDERTYPE` of smart folders differs between sources, so TopoText goes by the query).
+`Store.smartFolders()` returns the folder's name, parent, account, and the query text as stored.
+The stored query looks like `{"entity":"note","type":{"and":[{"deleted":false}, …]}}`
+(sweetrb); TopoText doesn't interpret it or evaluate it against notes.
