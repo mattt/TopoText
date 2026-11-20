@@ -203,6 +203,11 @@ struct NoteEditor: Sendable {
             throw NoteEditError.insideAttachment
         }
 
+        // The writing direction of the paragraph before the new ones, or of the one after them.
+        let neighbor = note.run(at: offset - 1)?.index ?? 0
+        let direction = (note.runs[..<min(neighbor + 1, note.runs.count)].reversed() + note.runs.dropFirst(neighbor + 1))
+            .lazy.compactMap { $0.paragraphStyle?.varint(3) }.first
+
         var inserted: [UInt16] = []
         var runs: [StoredNote.AttributeRun] = []
         var styled: [Range<Int>] = []
@@ -228,7 +233,7 @@ struct NoteEditor: Sendable {
                 styled.append(start ..< start + length)
             }
             if length > 0 {
-                runs.append(StoredNote.AttributeRun(length: length, paragraphStyle: paragraphStyle(for: piece.paragraph)))
+                runs.append(StoredNote.AttributeRun(length: length, paragraphStyle: paragraphStyle(for: piece.paragraph, writingDirection: direction)))
             }
         }
 
@@ -248,21 +253,31 @@ struct NoteEditor: Sendable {
         note.text = String(decoding: units[..<offset] + inserted + units[offset...], as: UTF16.self)
     }
 
-    /// The paragraph style of a new paragraph, or `nil` for body text, which Notes on macOS stores without one.
+    /// The paragraph style of a new paragraph.
     ///
-    /// Inference: the style holds only `style` [1] and, for a checklist item, `todo` [5].
-    /// Every other field of a paragraph style is optional, and absent means its default.
-    private func paragraphStyle(for paragraph: NoteEdit.NewParagraph) -> WireMessage? {
+    /// On macOS 27.0.1, 99 of 100 runs had a paragraph style, and half of the styles had no `style` [1],
+    /// which is how Notes stores body text. Nine of ten styles had `writingDirection` [3].
+    /// So a new paragraph gets a style with `style` [1] for a list, the writing direction of the nearest paragraph,
+    /// and `todo` [5] for a checklist item.
+    ///
+    /// Inference: the nearest paragraph's writing direction is the right one for the new paragraph.
+    /// Inference: the style needs no `uuid` [9], which 28 of 100 stored styles had; its meaning is not known.
+    /// - Returns: The style, or `nil` for body text in a note that has no writing direction to take.
+    private func paragraphStyle(for paragraph: NoteEdit.NewParagraph, writingDirection: UInt64?) -> WireMessage? {
+        var fields: [WireMessage.Field] = []
         switch paragraph.style {
-        case .body:
-            return nil
-        case .bulleted:
-            return WireMessage([.init(1, .varint(100))])
-        case .numbered:
-            return WireMessage([.init(1, .varint(102))])
-        case .checklist:
-            return WireMessage([.init(1, .varint(103)), .init(5, .bytes(newTodo(isChecked: paragraph.isChecked).encoded()))])
+        case .body: break
+        case .bulleted: fields.append(.init(1, .varint(100)))
+        case .numbered: fields.append(.init(1, .varint(102)))
+        case .checklist: fields.append(.init(1, .varint(103)))
         }
+        if let writingDirection {
+            fields.append(.init(3, .varint(writingDirection)))
+        }
+        if paragraph.style == .checklist {
+            fields.append(.init(5, .bytes(newTodo(isChecked: paragraph.isChecked).encoded())))
+        }
+        return fields.isEmpty ? nil : WireMessage(fields)
     }
 
     /// A `Todo` message with a new identifier.

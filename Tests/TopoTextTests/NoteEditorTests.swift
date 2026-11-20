@@ -110,8 +110,11 @@ private func expectConsistent(
         // The line feed that ends the old last paragraph joins that paragraph's run.
         #expect(after.runs[14].length == before.runs[14].length + 1)
         #expect(after.runs[14].hasSameAttributes(as: before.runs[14]))
-        // The body paragraph has a run with a length and nothing else.
-        #expect(after.runs[15].message.fields.map(\.number) == [1])
+        // Each new paragraph has a paragraph style with the writing direction of the nearest paragraph that has one.
+        // Body text has no style type, as Notes stores it.
+        #expect(after.runs[15].message.fields.map(\.number) == [1, 2])
+        #expect(after.runs.suffix(5).map { $0.paragraphStyle?.fields.map(\.number) } == [[3], [1, 3], [1, 3], [1, 3, 5], [1, 3, 5]])
+        #expect(after.runs.suffix(5).allSatisfy { $0.paragraphStyle?.varint(3) == 0 })
 
         // New checklist items get identifiers of their own, in 16 bytes.
         let identifiers = after.runs.compactMap { $0.todo?.bytes(1) }
@@ -207,6 +210,27 @@ private func expectConsistent(
         // After the last paragraph is the end of the note.
         let atEnd = try edit(RichNote.protobuf, [.insertParagraphs([.init("Last")], at: .after(.index(5)))]).after
         #expect(atEnd.text == (try edit(RichNote.protobuf, [.appendParagraphs([.init("Last")])]).after.text))
+    }
+
+    @Test("A new paragraph takes the writing direction of the paragraph before it, or of the one after it")
+    func writingDirection() throws {
+        let document = storedDocument([
+            run("One\n") { $0.message(2, paragraphStyle(0) { $0.int(3, 2) }) },
+            run("Two\n"),
+            run("Three\n") { $0.message(2, paragraphStyle(100) { $0.int(3, 1) }) },
+        ])
+        func directions(_ position: NoteEdit.ParagraphPosition) throws -> [UInt64?] {
+            try edit(document, [.insertParagraphs([.init("New")], at: position)]).after.runs.map { $0.paragraphStyle?.varint(3) }
+        }
+        #expect(try directions(.before(.index(0))) == [2, 2, nil, 1])
+        #expect(try directions(.before(.index(1))) == [2, 2, nil, 1])
+        #expect(try directions(.after(.index(1))) == [2, nil, 2, 1])
+        #expect(try directions(.end) == [2, nil, 1, 1])
+
+        // A note without a writing direction gives none, and body text then has no paragraph style.
+        let plain = try edit(storedDocument([run("One")]), [.appendParagraphs([.init("Two"), .init("Three", style: .bulleted)])]).after
+        #expect(plain.runs.map { $0.paragraphStyle?.fields.map(\.number) } == [nil, nil, [1]])
+        #expect(plain.runs.map(\.length) == [4, 4, 5])
     }
 
     @Test("A paragraph that is inserted in the middle of a run splits the run")
@@ -543,6 +567,27 @@ private func expectConsistent(
         #expect(after.text == "abXc")
         #expect(after.substrings.map(\.children) == [[1], [2, 4], [3], [5], [5], []])
         try expectConsistent(before, after, replaced: 2 ..< 2, inserted: 1)
+    }
+
+    @Test("An insertion changes the child indexes of earlier substrings that point past it, and nothing else of them")
+    func appendToBranchedDocument() throws {
+        // Two substrings point to the end marker, as after concurrent insertions at the end of a note.
+        let substrings = [
+            originSubstring,
+            SubstringSpec(replica: 1, clock: 0, length: 1, style: (1, 0), children: [2, 3]),
+            SubstringSpec(replica: 2, clock: 0, length: 1, style: (2, 0), children: [4]),
+            SubstringSpec(replica: 1, clock: 1, length: 1, style: (1, 0), children: [4]),
+            endSubstring,
+        ]
+        let replicas = [ReplicaSpec(uuid: replicaUUID(0x11), clocks: [2, 1]), ReplicaSpec(uuid: replicaUUID(0x22), clocks: [1, 1])]
+        let (before, after) = try edit(storedDocument([run("abc")], substrings: substrings, replicas: replicas), [.appendParagraphs([.init("d")])])
+        try expectConsistent(before, after, replaced: 3 ..< 3, inserted: 2)
+        // The end marker moved from index 4 to 5, so the earlier substring that points to it has another index for it.
+        #expect(after.substrings.map(\.children) == [[1], [2, 3], [5], [4], [5], []])
+        #expect(after.substrings[2] != before.substrings[2])
+        var moved = before.substrings[2]
+        moved.children = [5]
+        #expect(after.substrings[2].message.encoded() == moved.message.encoded())
     }
 
     @Test("Fields that no schema names, and the parts that an edit does not touch, keep their bytes")
