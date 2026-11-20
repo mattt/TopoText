@@ -63,6 +63,24 @@ extension Data {
         return inflated
     }
 
+    /// Compresses the data as gzip (RFC 1952), the format of note contents.
+    ///
+    /// The header has no optional fields and no modification time.
+    /// Its operating system byte is 19, the value that zlib writes on macOS; readers ignore it.
+    /// The compressed bytes can differ from those that Notes wrote for the same data,
+    /// because deflate allows many encodings of one input.
+    /// - Throws: An error from Foundation if the data can't be compressed.
+    func gzipped() throws -> Data {
+        var output = Data([0x1F, 0x8B, 8, 0, 0, 0, 0, 0, 0, 19])
+        // Foundation's zlib algorithm writes raw deflate data (RFC 1951). It rejects empty input,
+        // for which the deflate stream is one empty final block.
+        output.append(isEmpty ? Data([0x03, 0x00]) : try (self as NSData).compressed(using: .zlib) as Data)
+        for value in [crc32(), UInt32(truncatingIfNeeded: count)] {
+            output.append(contentsOf: (0 ..< 4).map { UInt8(truncatingIfNeeded: value >> (8 * $0)) })
+        }
+        return output
+    }
+
     /// The CRC-32 checksum that gzip stores in its trailer.
     func crc32() -> UInt32 {
         var crc: UInt32 = 0xFFFF_FFFF

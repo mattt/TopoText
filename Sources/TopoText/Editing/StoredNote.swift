@@ -1,0 +1,536 @@
+import Foundation
+
+/// The stored document of one note, with every field that Notes wrote.
+///
+/// ``NoteDocument`` reads the text and the attribute runs, and drops the rest.
+/// This type keeps the whole document, so that an edit can change part of it
+/// and write the rest back as it was.
+/// The structure, with field numbers in brackets (see <doc:NoteStore>):
+///
+/// - `Document`: `serializationVersion` [1], repeated `Version` [2]
+/// - `Version`: `serializationVersion` [1], `minimumSupportedVersion` [2], `data` [3]
+/// - `String` (the `data`): `string` [2], repeated `Substring` [3], `VectorTimestamp` [4],
+///   repeated `AttributeRun` [5], repeated `Attachment` [6]
+/// - `Substring`: `charID` [1], `length` [2], `timestamp` [3], `tombstone` [4], repeated `child` [5]
+/// - `CharID`: `replicaID` [1], `clock` [2]
+/// - `VectorTimestamp`: repeated `Clock` [1]
+/// - `Clock`: `replicaUUID` [1], repeated `ReplicaClock` [2]
+/// - `ReplicaClock`: `clock` [1], `subclock` [2]
+///
+/// The substrings, the vector timestamp, and the style timestamps are the merge state:
+/// what Notes uses to combine the edits of several devices.
+///
+/// Encoding a document that was not changed gives the bytes that it was decoded from.
+struct StoredNote: Hashable, Sendable {
+    /// The identifier of a character: the replica that inserted it, and that replica's clock at the time.
+    ///
+    /// A style timestamp has the same form, with the replica's style clock.
+    struct CharacterID: Hashable, Sendable {
+        /// A 1-based index into the replicas, or 0 for the origin and the end marker.
+        var replica: Int
+        var clock: Int
+
+        fileprivate init(_ message: WireMessage?) {
+            replica = message?.uint32(1) ?? 0
+            clock = message?.uint32(2) ?? 0
+        }
+
+        init(replica: Int, clock: Int) {
+            self.replica = replica
+            self.clock = clock
+        }
+
+        /// A message with both fields written, as Notes writes them, zero or not.
+        fileprivate var message: WireMessage {
+            WireMessage([.init(1, .varint(UInt64(replica))), .init(2, .varint(UInt64(clock)))])
+        }
+
+        /// Writes the identifier to a field of a message, and leaves the field alone if it reads as the identifier already.
+        fileprivate func write(to message: inout WireMessage, field: Int) {
+            guard CharacterID(message.message(field)) != self else { return }
+            var nested = message.message(field) ?? WireMessage()
+            nested.setVarint(1, UInt64(replica))
+            nested.setVarint(2, UInt64(clock))
+            message.setMessage(field, nested)
+        }
+    }
+
+    /// A run of characters that one replica inserted together, with consecutive clock values.
+    ///
+    /// The substrings are in the order of the text.
+    /// A substring with a tombstone holds deleted characters, which are not in the text.
+    struct Substring: Hashable, Sendable {
+        /// The clock value of the substring that ends every document.
+        static let endClock = 0xFFFF_FFFF
+
+        private(set) var message: WireMessage
+
+        init(_ message: WireMessage) {
+            self.message = message
+        }
+
+        /// Creates a substring for newly inserted characters.
+        init(id: CharacterID, length: Int, styleTimestamp: CharacterID) {
+            message = WireMessage([
+                .init(1, .bytes(id.message.encoded())),
+                .init(2, .varint(UInt64(length))),
+                .init(3, .bytes(styleTimestamp.message.encoded())),
+            ])
+        }
+
+        /// The identifier of the first character. Each following character has the next clock value.
+        var id: CharacterID {
+            get { CharacterID(message.message(1)) }
+            set { newValue.write(to: &message, field: 1) }
+        }
+
+        /// The number of UTF-16 code units.
+        var length: Int {
+            get { message.uint32(2) ?? 0 }
+            set { message.setVarint(2, UInt64(newValue)) }
+        }
+
+        /// The replica that last set the style of the characters, or deleted them, and its style clock at the time.
+        var styleTimestamp: CharacterID {
+            get { CharacterID(message.message(3)) }
+            set { newValue.write(to: &message, field: 3) }
+        }
+
+        /// The stored tombstone value: 1 for deleted characters, and absent, read as 0, for the others.
+        var tombstoneValue: UInt64 {
+            message.varint(4) ?? 0
+        }
+
+        var isTombstone: Bool {
+            get { tombstoneValue != 0 }
+            set {
+                if newValue != isTombstone {
+                    message.set(4, newValue ? .varint(1) : nil)
+                }
+            }
+        }
+
+        /// The indexes of the substrings that follow this one in the insertion graph.
+        ///
+        /// Notes writes one field for each index. A packed field is read too, and written back packed.
+        var children: [Int] {
+            get {
+                message.values(5).flatMap { value -> [Int] in
+                    switch value {
+                    case .varint(let index): return [Int(index & 0xFFFF_FFFF)]
+                    case .bytes(let packed): return Self.unpack(packed)
+                    default: return []
+                    }
+                }
+            }
+            set {
+                guard newValue != children else { return }
+                let isPacked = message.values(5).contains { if case .bytes = $0 { true } else { false } }
+                if isPacked {
+                    let packed = WireMessage(newValue.map { .init(0, .varint(UInt64($0))) }).encoded()
+                    // Each entry is a key of 0 and a varint, so dropping the key bytes leaves the packed varints.
+                    message.setRepeated(5, [.bytes(Self.droppingKeys(packed))])
+                } else {
+                    message.setRepeated(5, newValue.map { .varint(UInt64($0)) })
+                }
+            }
+        }
+
+        /// Whether this is the substring that ends the document.
+        var isEnd: Bool {
+            id.clock == Self.endClock
+        }
+
+        /// Whether the substring holds characters of the text.
+        var isVisible: Bool {
+            !isTombstone && !isEnd && length > 0
+        }
+
+        private static func unpack(_ packed: [UInt8]) -> [Int] {
+            var values: [Int] = []
+            var current: UInt64 = 0
+            var shift: UInt64 = 0
+            for byte in packed {
+                current |= UInt64(byte & 0x7F) << min(shift, 63)
+                shift += 7
+                if byte & 0x80 == 0 {
+                    values.append(Int(current & 0xFFFF_FFFF))
+                    current = 0
+                    shift = 0
+                }
+            }
+            return values
+        }
+
+        private static func droppingKeys(_ encoded: [UInt8]) -> [UInt8] {
+            var output: [UInt8] = []
+            var atKey = true
+            for byte in encoded {
+                if atKey {
+                    atKey = false
+                } else {
+                    output.append(byte)
+                    atKey = byte & 0x80 == 0
+                }
+            }
+            return output
+        }
+    }
+
+    /// A device or session that edited the note, and how far its clocks have advanced.
+    struct Replica: Hashable, Sendable {
+        private(set) var message: WireMessage
+
+        init(_ message: WireMessage) {
+            self.message = message
+        }
+
+        /// Creates the entry of a replica that joins the document.
+        init(uuid: [UInt8], textClock: Int, styleClock: Int) {
+            message = WireMessage(
+                [.init(1, .bytes(uuid))] + [textClock, styleClock].map { .init(2, .bytes(Self.clockMessage($0).encoded())) }
+            )
+        }
+
+        /// The replica's UUID, in 16 bytes.
+        var uuid: [UInt8] {
+            message.bytes(1) ?? []
+        }
+
+        /// The replica's clocks: first the text clock, then the style clock.
+        var clocks: [Int] {
+            message.values(2).map { value in
+                guard case .bytes(let bytes) = value else { return 0 }
+                return (try? WireMessage(bytes))?.uint32(1) ?? 0
+            }
+        }
+
+        /// The number of UTF-16 code units that the replica has inserted,
+        /// which is the clock value of the next character that it inserts.
+        var textClock: Int {
+            get { clocks.first ?? 0 }
+            set { setClock(0, newValue) }
+        }
+
+        /// The number of the replica's next style operation.
+        var styleClock: Int {
+            get { clocks.count > 1 ? clocks[1] : 0 }
+            set { setClock(1, newValue) }
+        }
+
+        /// Whether a clock has a `subclock`, which no source has seen and the edit engine does not maintain.
+        var hasSubclock: Bool {
+            message.values(2).contains { value in
+                guard case .bytes(let bytes) = value else { return false }
+                return (try? WireMessage(bytes))?.contains(2) ?? false
+            }
+        }
+
+        private mutating func setClock(_ index: Int, _ clock: Int) {
+            var values = message.values(2)
+            while values.count <= index {
+                values.append(.bytes(Self.clockMessage(0).encoded()))
+            }
+            guard clocks.count <= index || clocks[index] != clock else { return }
+            if case .bytes(let bytes) = values[index], var nested = try? WireMessage(bytes) {
+                nested.setVarint(1, UInt64(clock))
+                values[index] = .bytes(nested.encoded())
+            } else {
+                values[index] = .bytes(Self.clockMessage(clock).encoded())
+            }
+            message.setRepeated(2, values)
+        }
+
+        private static func clockMessage(_ clock: Int) -> WireMessage {
+            WireMessage([.init(1, .varint(UInt64(clock)))])
+        }
+    }
+
+    /// A run of characters with the same attributes, as stored.
+    ///
+    /// The run keeps every field, including those that TopoText does not read.
+    struct AttributeRun: Hashable, Sendable {
+        var message: WireMessage
+
+        init(_ message: WireMessage) {
+            self.message = message
+        }
+
+        /// Creates a run with a length and, optionally, a paragraph style.
+        init(length: Int, paragraphStyle: WireMessage? = nil) {
+            message = WireMessage([.init(1, .varint(UInt64(length)))])
+            if let paragraphStyle {
+                message.setMessage(2, paragraphStyle)
+            }
+        }
+
+        /// The number of UTF-16 code units, or a negative number if the stored length is negative.
+        var length: Int {
+            get { message.int32(1) ?? 0 }
+            set { message.setVarint(1, UInt64(newValue)) }
+        }
+
+        var paragraphStyle: WireMessage? {
+            get { message.message(2) }
+            set { message.set(2, newValue.map { .bytes($0.encoded()) }) }
+        }
+
+        /// The `style` value of the paragraph style: 100 bulleted, 102 numbered, 103 checklist, and so on.
+        var styleType: Int? {
+            paragraphStyle?.int32(1)
+        }
+
+        /// The checklist state, a `Todo` message with `todoUUID` [1] and `done` [2].
+        var todo: WireMessage? {
+            paragraphStyle?.message(5)
+        }
+
+        /// Whether the run stands for an attachment: it has `attachmentInfo` [12] or `systemAttachmentInfo` [15].
+        var hasAttachment: Bool {
+            message.contains(12) || message.contains(15)
+        }
+
+        /// The type of the run's attachment, such as `com.apple.notes.table`.
+        var attachmentType: String? {
+            message.message(12)?.string(2)
+        }
+
+        /// Returns whether two runs have the same attributes, whatever their lengths.
+        func hasSameAttributes(as other: AttributeRun) -> Bool {
+            var first = message
+            var second = other.message
+            first.set(1, nil)
+            second.set(1, nil)
+            return first.fields.elementsEqual(second.fields) { $0.number == $1.number && $0.value == $1.value }
+        }
+
+        /// A copy of the run for text that is inserted next to it:
+        /// the same attributes, without the attachment and without the link.
+        func copyForAdjacentText() -> AttributeRun {
+            var copy = self
+            for number in [9, 12, 15] {
+                copy.message.set(number, nil)
+            }
+            return copy
+        }
+    }
+
+    /// The document, the version, and the string, as decoded. The typed properties below replace parts of them on encoding.
+    private var document: WireMessage
+    private var version: WireMessage
+    private var string: WireMessage
+    private var vectorTimestamp: WireMessage?
+    /// The text as decoded, to tell whether an edit changed it.
+    private let storedText: String
+
+    /// The number of `Version` messages in the document. Notes writes one.
+    let versionCount: Int
+    /// Whether the stored text is valid UTF-8, so that ``text`` holds it without loss.
+    let textIsValid: Bool
+
+    /// The text of the note. Positions in it count UTF-16 code units.
+    var text: String
+    /// The substrings, in the order of the text. The list is empty for a document without merge state.
+    var substrings: [Substring]
+    /// The replicas of the vector timestamp. A character's `replica` is a 1-based index into them.
+    var replicas: [Replica]
+    var runs: [AttributeRun]
+
+    /// Decodes the contents of `ZICNOTEDATA.ZDATA`.
+    /// - Throws: A ``FormatError`` if the data is not a gzip-compressed note document.
+    init(data: Data) throws {
+        try self.init(protobuf: Array(try data.gunzipped()))
+    }
+
+    /// Decodes a decompressed note document.
+    /// - Throws: ``FormatError/unrecognized`` if the bytes have no note,
+    ///   or ``FormatError/malformed`` if the bytes or a message of the merge state don't decode.
+    init(protobuf: [UInt8]) throws {
+        document = try WireMessage(protobuf)
+        // Where a field repeats, ``NoteDocument`` reads its last value, and so does this.
+        guard let versionBytes = document.bytes(2) else {
+            throw FormatError.unrecognized
+        }
+        version = try WireMessage(versionBytes)
+        guard let stringBytes = version.bytes(3) else {
+            throw FormatError.unrecognized
+        }
+        string = try WireMessage(stringBytes)
+        versionCount = document.values(2).count
+
+        let textBytes = string.bytes(2) ?? []
+        text = String(decoding: textBytes, as: UTF8.self)
+        storedText = text
+        textIsValid = Array(text.utf8) == textBytes
+
+        func messages(_ message: WireMessage, _ number: Int) throws -> [WireMessage] {
+            try message.values(number).map { value in
+                guard case .bytes(let bytes) = value else { throw FormatError.malformed }
+                return try WireMessage(bytes)
+            }
+        }
+        substrings = try messages(string, 3).map(Substring.init)
+        runs = try messages(string, 5).map(AttributeRun.init)
+        if let bytes = string.bytes(4) {
+            let timestamp = try WireMessage(bytes)
+            vectorTimestamp = timestamp
+            replicas = try messages(timestamp, 1).map(Replica.init)
+        } else {
+            replicas = []
+        }
+    }
+
+    /// The decompressed bytes of the document.
+    func protobuf() -> [UInt8] {
+        var string = string
+        if text != storedText {
+            string.set(2, .bytes(Array(text.utf8)))
+        }
+        string.setRepeated(3, substrings.map { .bytes($0.message.encoded()) })
+        if vectorTimestamp != nil || !replicas.isEmpty {
+            var timestamp = vectorTimestamp ?? WireMessage()
+            timestamp.setRepeated(1, replicas.map { .bytes($0.message.encoded()) })
+            string.setMessage(4, timestamp)
+        }
+        string.setRepeated(5, runs.map { .bytes($0.message.encoded()) })
+
+        var version = version
+        version.setMessage(3, string)
+        var document = document
+        document.setMessage(2, version)
+        return document.encoded()
+    }
+
+    /// The contents for `ZICNOTEDATA.ZDATA`: the document, gzip-compressed.
+    func data() throws -> Data {
+        try Data(protobuf()).gzipped()
+    }
+
+    /// Whether the document has a vector timestamp. Table cells have none.
+    var hasVectorTimestamp: Bool {
+        vectorTimestamp != nil
+    }
+
+    /// The messages of the document that the edit engine can write, for ``WireMessage/reencoded(as:)``.
+    static let schema: WireMessage.Schema = {
+        let characterID = WireMessage.Schema()
+        let substring = WireMessage.Schema(nested: [1: characterID, 3: characterID])
+        let vectorTimestamp = WireMessage.Schema(nested: [1: .init(nested: [2: .init()])])
+        let paragraphStyle = WireMessage.Schema(nested: [5: .init()])
+        let run = WireMessage.Schema(nested: [2: paragraphStyle, 3: .init(), 10: .init(), 12: .init()])
+        let string = WireMessage.Schema(nested: [3: substring, 4: vectorTimestamp, 5: run])
+        return WireMessage.Schema(nested: [2: .init(nested: [3: string])])
+    }()
+}
+
+// MARK: - Text and paragraphs
+
+extension StoredNote {
+    /// A paragraph of the text, in UTF-16 code units.
+    struct ParagraphRange: Hashable, Sendable {
+        /// The paragraph's characters, without its line feed.
+        var content: Range<Int>
+        /// Whether a line feed ends the paragraph. The last paragraph can lack one.
+        var hasLineFeed: Bool
+
+        /// The paragraph's characters and its line feed.
+        var full: Range<Int> {
+            content.lowerBound ..< content.upperBound + (hasLineFeed ? 1 : 0)
+        }
+    }
+
+    /// The length of the text in UTF-16 code units.
+    var length: Int {
+        text.utf16.count
+    }
+
+    /// The paragraphs of the text, as ``NoteDocument/paragraphs`` and ``Note/Content/paragraphs`` count them:
+    /// a line feed ends a paragraph, and the text after the last line feed is a paragraph only if it is not empty.
+    var paragraphRanges: [ParagraphRange] {
+        var ranges: [ParagraphRange] = []
+        var start = 0
+        var offset = 0
+        for unit in text.utf16 {
+            if unit == 0x0A {
+                ranges.append(ParagraphRange(content: start ..< offset, hasLineFeed: true))
+                start = offset + 1
+            }
+            offset += 1
+        }
+        if start < offset {
+            ranges.append(ParagraphRange(content: start ..< offset, hasLineFeed: false))
+        }
+        return ranges
+    }
+
+    /// The index of the run that covers the character at an offset, and the offset of the run's first character.
+    func run(at offset: Int) -> (index: Int, start: Int)? {
+        var start = 0
+        for (index, run) in runs.enumerated() {
+            if offset < start + run.length {
+                return offset >= start ? (index, start) : nil
+            }
+            start += run.length
+        }
+        return nil
+    }
+}
+
+// MARK: - Invariants
+
+extension StoredNote {
+    /// A property of a stored document that the edit engine relies on.
+    ///
+    /// A document that lacks one of them is not edited.
+    /// The raw value describes the property without any of the note's contents.
+    enum Invariant: String, CaseIterable, Hashable, Sendable {
+        case oneVersion = "the document has one version"
+        case validText = "the text is valid UTF-8"
+        case vectorTimestamp = "the document has a vector timestamp"
+        case replicaIdentifiers = "each replica has a 16-byte UUID"
+        case noSubclock = "no replica clock has a subclock"
+        case endSubstring = "the last substring, and no other, is the end marker"
+        case substringLengths = "the lengths of the substrings without a tombstone add up to the length of the text"
+        case runLengths = "the lengths of the attribute runs add up to the length of the text, and none is negative"
+        case replicaIndexes = "each character identifier and style timestamp names a replica of the vector timestamp"
+        case textClocks = "no substring has a clock value past its replica's text clock"
+        case clockRange = "each clock is below 2 to the power 31"
+        case tombstoneValues = "each tombstone value is 1"
+        case childIndexes = "each substring but the end marker has children, and each child comes later in the list"
+    }
+
+    /// The invariants that the document lacks.
+    var brokenInvariants: [Invariant] {
+        var broken: Set<Invariant> = []
+        func require(_ invariant: Invariant, _ condition: Bool) {
+            if !condition { broken.insert(invariant) }
+        }
+        let length = self.length
+
+        require(.oneVersion, versionCount == 1)
+        require(.validText, textIsValid)
+        require(.vectorTimestamp, hasVectorTimestamp)
+        require(.replicaIdentifiers, replicas.allSatisfy { $0.uuid.count == 16 })
+        require(.noSubclock, !replicas.contains(where: \.hasSubclock))
+        require(.endSubstring, substrings.last?.isEnd == true && !substrings.dropLast().contains(where: \.isEnd))
+        require(.substringLengths, substrings.reduce(0) { $0 + ($1.isTombstone ? 0 : $1.length) } == length)
+        require(.runLengths, runs.allSatisfy { $0.length >= 0 } && runs.reduce(0) { $0 + $1.length } == length)
+
+        let limit = 1 << 31
+        require(.clockRange, replicas.allSatisfy { $0.clocks.allSatisfy { $0 < limit } })
+        for (index, substring) in substrings.enumerated() {
+            let id = substring.id
+            let timestamp = substring.styleTimestamp
+            require(.replicaIndexes, id.replica <= replicas.count && timestamp.replica <= replicas.count)
+            require(.tombstoneValues, substring.tombstoneValue <= 1)
+            guard !substring.isEnd else { continue }
+            require(.clockRange, id.clock + substring.length < limit && timestamp.clock < limit)
+            if id.replica >= 1, id.replica <= replicas.count {
+                require(.textClocks, id.clock + substring.length <= replicas[id.replica - 1].textClock)
+            }
+            let children = substring.children
+            require(.childIndexes, !children.isEmpty && children.allSatisfy { $0 > index && $0 < substrings.count })
+        }
+        return Invariant.allCases.filter(broken.contains)
+    }
+}
