@@ -603,11 +603,14 @@ private func expectConsistent(
         #expect(version.varint(7) == 42 && version.varint(1) == 0 && version.varint(2) == 0)
         #expect(string.message(6)?.string(2) == "ATTACHMENT-DATA")
         #expect(string.values(100) == [.fixed32(Float(1.5).bitPattern)])
-        #expect(
-            string.fields.map(\.number) == [2] + Array(repeating: 3, count: after.substrings.count) + [4] + Array(repeating: 5, count: after.runs.count) + [
-                6, 100,
-            ]
-        )
+        // Built up in steps: one long array concatenation here is slow enough
+        // to type-check that Swift 6.1 and 6.2 give up on it.
+        var expectedFields = [2]
+        expectedFields += Array(repeating: 3, count: after.substrings.count)
+        expectedFields.append(4)
+        expectedFields += Array(repeating: 5, count: after.runs.count)
+        expectedFields += [6, 100]
+        #expect(string.fields.map(\.number) == expectedFields)
 
         #expect(after.substrings.first(where: \.isTombstone)?.message.string(9) == "substring")
         #expect(after.replicas[1].message.string(5) == "replica")
