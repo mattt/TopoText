@@ -18,7 +18,10 @@ import TopoText
 //
 // A debug build also checks what the edit engine assumes about each stored document (see RawInspection.swift):
 // that the document encodes to its stored bytes, and each invariant that an edit relies on.
-// It applies one edit to each document in memory, and never writes to the database.
+// It then applies four edits to each document in memory, and never writes to the database.
+// The edits of one note have a time limit, after which the note counts as "timed out" and the tool goes on.
+//
+// Each section is printed when it is complete. Standard error gets a progress line for every 200 notes.
 
 /// Counts of what the tool found, keyed by a label that describes the count.
 struct Tally: Sendable {
@@ -312,11 +315,9 @@ if arguments.contains("--smart-folders") {
 }
 
 #if DEBUG
-    print("")
-    print("Stored contents (internal decoders):")
-    for (label, count) in try inspectStoredContents(root: root).sorted(by: { $0.key < $1.key }) {
-        print("\(label): \(count)")
-    }
+    // The sections above are complete, so show them before the work that takes longest.
+    fflush(stdout)
+    try inspectStoredContents(root: root)
 #endif
 
 if arguments.contains("--applescript") {

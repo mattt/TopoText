@@ -5,46 +5,252 @@
     import SQLite3
     @testable import TopoText
 
-    /// Counts the stored values behind the decoded contents: protocol buffer fields, style values that
-    /// TopoText doesn't recognize, and how titles relate to the text.
+    /// Counts the stored values behind the decoded contents, and prints the counts in two sections.
+    ///
+    /// The first section has the protocol buffer fields, the style values that TopoText doesn't recognize,
+    /// how titles relate to the text, and what the edit engine assumes about each stored document.
+    /// The second section has the results of the edits that the tool applies in memory.
+    /// Each section is printed as soon as it is complete, and standard error gets a line for every 200 notes,
+    /// so a run that takes long shows where it is.
     ///
     /// Like the rest of the tool, it prints only counts and numbers that the format defines,
     /// never text, titles, identifiers, or file names.
-    func inspectStoredContents(root: URL) throws -> [String: Int] {
-        var counts: [String: Int] = [:]
-        func add(_ label: String, _ amount: Int = 1) {
-            counts[label, default: 0] += amount
-        }
-
+    func inspectStoredContents(root: URL) throws {
         let database = try Database(root: root, timeLimit: .seconds(600))
         defer { database.close() }
         try database.readTransaction {
-            var cursor: Note.FetchRequest.Cursor?
-            repeat {
-                let result = try database.search(.init(includesRecentlyDeleted: true, limit: Note.FetchRequest.maximumLimit, cursor: cursor))
-                for note in result.notes where !note.isLocked {
-                    guard let data = try database.noteData(rowID: note.rowID),
-                        let message = try? ProtobufMessage(data.gunzipped()).message(2)?.message(3)
-                    else {
-                        add("stored: notes without contents that decode")
-                        continue
-                    }
-                    inspectRuns(of: message, add: add)
-                    inspectStoredDocument(data, add: add)
-                    let content = try database.content(of: note)
-                    let category = titleCategory(title: note.title, content: content)
-                    add("titles: \(category)")
-                    if category.hasPrefix("not found") {
-                        inspectUnmatchedTitle(note: note, content: content, add: add)
-                    }
-                    try inspectRows(of: note, category: category, database: database, add: add)
-                    try inspectScans(in: content, database: database, add: add)
+            var counts: [String: Int] = [:]
+            func add(_ label: String, _ amount: Int = 1) {
+                counts[label, default: 0] += amount
+            }
+            var sizes = SizeCounts()
+            var examined = 0
+            try forEachNote(in: database) { note, data in
+                examined += 1
+                if examined.isMultiple(of: 200) { progress("stored contents: \(examined) notes examined") }
+                guard let data, let message = try? ProtobufMessage(data.gunzipped()).message(2)?.message(3) else {
+                    add("stored: notes without contents that decode")
+                    return
                 }
-                cursor = result.nextCursor
-            } while cursor != nil
+                inspectRuns(of: message, add: add)
+                inspectStoredDocument(data, sizes: &sizes, add: add)
+                let content = try database.content(of: note)
+                let category = titleCategory(title: note.title, content: content)
+                add("titles: \(category)")
+                if category.hasPrefix("not found") {
+                    inspectUnmatchedTitle(note: note, content: content, add: add)
+                }
+                try inspectRows(of: note, category: category, database: database, add: add)
+                try inspectScans(in: content, database: database, add: add)
+            }
             try inspectLinkRows(database: database, add: add)
+            printSection("Stored contents (internal decoders):", counts, sizes.lines)
+
+            var trials = TrialCounts()
+            examined = 0
+            try forEachNote(in: database) { _, data in
+                examined += 1
+                if examined.isMultiple(of: 200) { progress("trial edits: \(examined) notes examined") }
+                guard let data, let stored = try? StoredNote(data: data) else { return }
+                trials.run(on: stored)
+            }
+            printSection("Trial edits in memory (internal decoders):", trials.counts, trials.lines)
         }
-        return counts
+    }
+
+    /// Calls a closure with each note that is not locked, and the note's stored contents.
+    private func forEachNote(in database: Database, _ body: (Note, Data?) throws -> Void) throws {
+        var cursor: Note.FetchRequest.Cursor?
+        repeat {
+            let result = try database.search(.init(includesRecentlyDeleted: true, limit: Note.FetchRequest.maximumLimit, cursor: cursor))
+            for note in result.notes where !note.isLocked {
+                try body(note, try database.noteData(rowID: note.rowID))
+            }
+            cursor = result.nextCursor
+        } while cursor != nil
+    }
+
+    /// Prints a section of counts, in the order of their labels, and then other lines.
+    private func printSection(_ title: String, _ counts: [String: Int], _ lines: [String]) {
+        print("")
+        print(title)
+        for (label, count) in counts.sorted(by: { $0.key < $1.key }) {
+            print("\(label): \(count)")
+        }
+        for line in lines {
+            print(line)
+        }
+        // Standard output can be a file or a pipe, which keeps lines back until its buffer is full.
+        fflush(stdout)
+    }
+
+    /// Writes a line to standard error, which shows that the tool is at work without becoming part of its output.
+    private func progress(_ line: String) {
+        FileHandle.standardError.write(Data("\(line)\n".utf8))
+    }
+
+    /// The upper end of the range of sizes that a count belongs to: 0, 10, 100, and so on.
+    private func sizeLimit(_ count: Int) -> Int {
+        guard count > 0 else { return 0 }
+        var limit = 10
+        while limit < count { limit *= 10 }
+        return limit
+    }
+
+    /// The range of sizes that a count belongs to: "1 to 10", "11 to 100", and so on.
+    private func sizeBucket(_ count: Int) -> String {
+        let limit = sizeLimit(count)
+        return limit == 0 ? "0" : limit == 10 ? "1 to 10" : "\(limit / 10 + 1) to \(limit)"
+    }
+
+    /// The sizes of the stored documents: how many notes have each size, and the size of the largest.
+    private struct SizeCounts {
+        /// For each measure, the number of notes by the upper end of the range that their size is in.
+        private var counts: [String: [Int: Int]] = [:]
+
+        mutating func add(_ stored: StoredNote) {
+            let tombstones = stored.substrings.filter(\.isTombstone)
+            let sizes = [
+                ("UTF-16 code units of text", stored.length),
+                ("UTF-16 code units of deleted text", tombstones.reduce(0) { $0 + $1.length }),
+                ("substrings", stored.substrings.count),
+                ("substrings with a tombstone", tombstones.count),
+                ("attribute runs", stored.runs.count),
+            ]
+            for (name, size) in sizes {
+                counts[name, default: [:]][sizeLimit(size), default: 0] += 1
+            }
+        }
+
+        /// The number of notes in each range, from the smallest sizes to the largest.
+        /// The largest note appears as a range too, so that no line is the exact size of one note.
+        var lines: [String] {
+            counts.sorted { $0.key < $1.key }.flatMap { name, notes in
+                notes.sorted { $0.key < $1.key }.map { "sizes: notes with \(sizeBucket($0.key)) \(name): \($0.value)" }
+                    + ["sizes: the largest number of \(name) in a note is \(sizeBucket(notes.keys.max() ?? 0))"]
+            }
+        }
+    }
+
+    /// The results of a trial that runs on another thread, which the main thread reads when the trial ends or its time is up.
+    private final class TrialProgress: @unchecked Sendable {
+        private let lock = NSLock()
+        private var outcomes: [(name: String, outcome: NoteEditTrial.Outcome)] = []
+        private var current: String?
+
+        func start(_ name: String) {
+            lock.withLock { current = name }
+        }
+
+        func finish(_ name: String, _ outcome: NoteEditTrial.Outcome) {
+            lock.withLock {
+                outcomes.append((name, outcome))
+                current = nil
+            }
+        }
+
+        /// The trials that ended, and the name of the trial that is running.
+        var state: (outcomes: [(name: String, outcome: NoteEditTrial.Outcome)], current: String?) {
+            lock.withLock { (outcomes: outcomes, current: current) }
+        }
+    }
+
+    /// Applies the trial edits to each document in memory, and counts each check that a result fails.
+    ///
+    /// The trials of a note run on another thread and have a time limit.
+    /// When the time is up, the note counts as "timed out", with its form, and the tool goes on to the next note.
+    /// The thread can't be stopped, so after a few such notes the tool runs no more trials.
+    private struct TrialCounts {
+        /// The time that the trials of one note may take. The largest synthetic note takes under a second.
+        static let timeLimit = 20.0
+        /// The number of notes that may time out before the tool stops running trials.
+        static let timeoutLimit = 3
+
+        private(set) var counts: [String: Int] = [:]
+        private var timeouts = 0
+        private var total: Duration = .zero
+        private var slowest: Duration = .zero
+
+        private mutating func add(_ label: String) {
+            counts[label, default: 0] += 1
+        }
+
+        mutating func run(on stored: StoredNote) {
+            guard stored.brokenInvariants.isEmpty else {
+                add("trial: not run, the note lacks an invariant")
+                return
+            }
+            guard timeouts < Self.timeoutLimit else {
+                add("trial: not run, after \(Self.timeoutLimit) notes timed out")
+                return
+            }
+            let progress = TrialProgress()
+            let done = DispatchSemaphore(value: 0)
+            let thread = Thread {
+                for trial in NoteEditTrial.trials(for: stored) {
+                    progress.start(trial.name)
+                    progress.finish(trial.name, trial.run(on: stored))
+                }
+                done.signal()
+            }
+            thread.stackSize = 8 << 20
+            let start = ContinuousClock.now
+            thread.start()
+            let timedOut = done.wait(timeout: .now() + Self.timeLimit) == .timedOut
+            let elapsed = ContinuousClock.now - start
+            total += elapsed
+            slowest = max(slowest, elapsed)
+
+            let state = progress.state
+            for (name, outcome) in state.outcomes {
+                count(outcome, of: "trial, \(name)", in: stored)
+            }
+            if timedOut {
+                timeouts += 1
+                add("trial: timed out")
+                if let current = state.current { add("trial, \(current): timed out") }
+                add("trial: timed out, in a note with \(form(of: stored)), \(sizeBucket(stored.length)) UTF-16 code units of text")
+            }
+        }
+
+        private mutating func count(_ outcome: NoteEditTrial.Outcome, of label: String, in stored: StoredNote) {
+            switch outcome {
+            case .sound:
+                add("\(label): sound")
+            case .refused(let reason):
+                add("\(label): refused, \(reason)")
+            case .failed:
+                add("\(label): failed")
+            case .undecodable:
+                add("\(label): the result does not decode")
+            case .unsound(let failures):
+                add("\(label): not sound")
+                for failure in failures {
+                    add("\(label): not sound, \(failure)")
+                }
+                add("\(label): not sound, in a note with \(form(of: stored))")
+            }
+        }
+
+        /// The form of a note, without its contents: how many replicas and substrings, and how branched the substrings are.
+        private func form(of stored: StoredNote) -> String {
+            let end = stored.substrings.count - 1
+            let branched = stored.substrings.filter { $0.children.count > 1 }.count
+            let toEnd = stored.substrings.filter { $0.children.contains(end) }.count
+            let replicas = stored.replicas.count
+            return "\(replicas <= 3 ? "\(replicas)" : replicas <= 10 ? "4 to 10" : "over 10") replicas, "
+                + "\(sizeBucket(stored.substrings.count)) substrings, "
+                + "\(branched == 0 ? "no" : "some") substrings with more than one child, "
+                + "\(toEnd <= 1 ? "\(toEnd)" : "more than 1") that point to the end marker"
+        }
+
+        /// The time that the trials took, which is not part of the counts.
+        var lines: [String] {
+            func seconds(_ duration: Duration) -> String {
+                String(format: "%.1f", Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18)
+            }
+            return ["time for the trial edits: \(seconds(total)) seconds, of which the slowest note took \(seconds(slowest))"]
+        }
     }
 
     /// Counts what the rows of inline links to notes hold, for every note, without identifiers or text.
@@ -80,11 +286,10 @@
     /// Checks what the edit engine assumes about a note's stored document, without changing anything.
     ///
     /// It decodes the whole document, encodes it, and compares the bytes.
-    /// It counts each invariant that the document lacks, and the forms of the merge state.
-    /// For a document with every invariant, it applies an edit in memory and checks the result.
-    /// The edit is never written anywhere.
+    /// It counts each invariant that the document lacks, the forms of the merge state, and the size of the document.
+    /// Each step takes time in proportion to the size of the document.
     /// Like the rest of the tool, it prints only counts and numbers that the format defines.
-    private func inspectStoredDocument(_ data: Data, add: (String, Int) -> Void) {
+    private func inspectStoredDocument(_ data: Data, sizes: inout SizeCounts, add: (String, Int) -> Void) {
         func bucket(_ count: Int) -> String {
             count <= 3 ? "\(count)" : count <= 10 ? "4 to 10" : count <= 100 ? "11 to 100" : "over 100"
         }
@@ -97,6 +302,7 @@
             return
         }
         add("lossless: notes decoded", 1)
+        sizes.add(stored)
         add("lossless: encoding \(stored.protobuf() == protobuf ? "equals" : "differs from") the stored bytes", 1)
         let canonical = (try? WireMessage(protobuf))?.reencoded(as: StoredNote.schema)
         add("lossless: stored bytes \(canonical == protobuf ? "are" : "are not") in the canonical form", 1)
@@ -132,10 +338,11 @@
             add("merge state: end marker with the style timestamp (\(timestamp.replica == 0 ? "0" : "a replica"), \(clock))", 1)
         }
         for substring in stored.substrings {
-            for number in Set(substring.message.fields.map(\.number)) { add("merge state: Substring field \(number)", 1) }
+            let message = substring.message
+            for number in Set(message.fields.map(\.number)) { add("merge state: Substring field \(number)", 1) }
             if substring.isTombstone { add("merge state: substrings with a tombstone of \(substring.tombstoneValue)", 1) }
             if substring.children.count > 1 { add("merge state: substrings with more than one child", 1) }
-            if substring.message.values(5).contains(where: { if case .bytes = $0 { true } else { false } }) {
+            if message.values(5).contains(where: { if case .bytes = $0 { true } else { false } }) {
                 add("merge state: substrings with packed children", 1)
             }
             if !substring.isEnd, substring.id.replica != 0 {
@@ -158,8 +365,10 @@
             let identifier = todo.bytes(1) ?? []
             add("checklists: identifiers of \(identifier.count) bytes, UUID version \(identifier.count == 16 ? "\(identifier[6] >> 4)" : "none")", 1)
             add("checklists: done value \(todo.varint(2).map(String.init) ?? "absent")", 1)
-            for position in offset ..< offset + max(0, run.length) {
-                paragraphsByItem[identifier, default: []].insert(starts.lastIndex { $0 <= position } ?? 0)
+            guard run.length > 0 else { continue }
+            // Every paragraph that the run reaches, from the one of its first character to the one of its last.
+            for paragraph in paragraphIndex(at: offset, in: starts) ... paragraphIndex(at: offset + run.length - 1, in: starts) {
+                paragraphsByItem[identifier, default: []].insert(paragraph)
             }
         }
         for paragraphs in paragraphsByItem.values {
@@ -167,44 +376,17 @@
         }
 
         inspectStyleFields(of: stored, systemByte: data.count > 9 ? data[data.startIndex + 9] : nil, add: add)
+    }
 
-        // Edits in memory, each on the stored document. None is written anywhere.
-        guard broken.isEmpty else { return }
-        let length = stored.length
-        let paragraphs = stored.paragraphRanges
-        let endsWithLineFeed = stored.text.utf16.last == 0x0A
-        runTrial(
-            "append a checklist item",
-            .appendParagraphs([.init("x", style: .checklist)]),
-            to: stored,
-            replaced: length ..< length,
-            inserted: length == 0 || endsWithLineFeed ? 1 : 2,
-            add: add
-        )
-        if let first = paragraphs.first {
-            let end = first.content.upperBound
-            runTrial("insert text in the first paragraph", .insertText("x", at: .offset(end)), to: stored, replaced: end ..< end, inserted: 1, add: add)
+    /// The index of the paragraph that holds a position, by a binary search of the paragraphs' first positions.
+    private func paragraphIndex(at position: Int, in starts: [Int]) -> Int {
+        var low = 0
+        var high = starts.count
+        while low < high {
+            let middle = (low + high) / 2
+            if starts[middle] <= position { low = middle + 1 } else { high = middle }
         }
-        if let last = paragraphs.last, !last.content.isEmpty {
-            let range = last.content.lowerBound ..< last.content.lowerBound + 1
-            runTrial("delete a character of the last paragraph", .deleteText(.range(range)), to: stored, replaced: range, inserted: 0, add: add)
-        }
-        let item = paragraphs.indices.first { index in
-            stored.run(at: paragraphs[index].full.lowerBound).map { stored.runs[$0.index].styleType == 103 } ?? false
-        }
-        if let item, let run = stored.run(at: paragraphs[item].full.lowerBound) {
-            let isChecked = (stored.runs[run.index].todo?.varint(2) ?? 0) == 1
-            let start = paragraphs[item].full.lowerBound
-            runTrial(
-                "change a checklist item's state",
-                .setChecked(!isChecked, at: .index(item)),
-                to: stored,
-                replaced: start ..< start,
-                inserted: 0,
-                restyled: paragraphs[item].full,
-                add: add
-            )
-        }
+        return max(0, low - 1)
     }
 
     /// Counts the fields that the edit engine does not write on new text, to decide whether it should:
@@ -264,7 +446,7 @@
                 let version = identifier.count == 16 ? "\(identifier[6] >> 4)" : "none"
                 add("paragraph style field 9: present with style type \(type), UUID version \(version)", 1)
                 for position in [offset, offset + max(0, run.length - 1)] {
-                    paragraphsByIdentifier[identifier, default: []].insert(starts.lastIndex { $0 <= position } ?? 0)
+                    paragraphsByIdentifier[identifier, default: []].insert(paragraphIndex(at: position, in: starts))
                 }
             } else {
                 add("paragraph style field 9: absent with style type \(type)", 1)
@@ -280,167 +462,6 @@
             let field13 = share(stored.runs.filter { $0.message.contains(13) }.count, of: stored.runs.count)
             add("gzip: operating system byte \(systemByte), notes with \(bucket(stored.replicas.count)) replicas and field 13 on \(field13) of the runs", 1)
         }
-    }
-
-    /// Applies one edit to a document in memory and counts each check that the result fails.
-    ///
-    /// The checks are those that the tests make of every edit.
-    /// For a result that fails, it also counts the form of the note: how many replicas, and how branched the substrings are.
-    private func runTrial(
-        _ name: String,
-        _ edit: NoteEdit,
-        to stored: StoredNote,
-        replaced: Range<Int>,
-        inserted: Int,
-        restyled: Range<Int>? = nil,
-        add: (String, Int) -> Void
-    ) {
-        let label = "trial, \(name)"
-        let edited: StoredNote
-        do {
-            edited = try NoteEditor().apply([edit], to: stored)
-        } catch let error as NoteEditError {
-            // The name of the error's case, without the values that some cases carry.
-            var reason = String(describing: error).prefix { $0 != "(" }
-            if case .unsupportedDocument(let invariant) = error { reason += ", not true that \(invariant.rawValue)" }
-            add("\(label): refused, \(reason)", 1)
-            return
-        } catch {
-            add("\(label): failed", 1)
-            return
-        }
-        guard let data = try? edited.data(), let reread = try? StoredNote(data: data) else {
-            add("\(label): the result does not decode", 1)
-            return
-        }
-        var failures = consistencyFailures(before: stored, after: reread, replaced: replaced, inserted: inserted, restyled: restyled)
-        if (try? NoteDocument(data: data))?.text != reread.text { failures.append("the reader's text differs") }
-        if reread.protobuf() != edited.protobuf() { failures.append("the result decodes to another document") }
-        guard !failures.isEmpty else {
-            add("\(label): sound", 1)
-            return
-        }
-        add("\(label): not sound", 1)
-        for failure in failures {
-            add("\(label): not sound, \(failure)", 1)
-        }
-        let end = stored.substrings.count - 1
-        let branched = stored.substrings.filter { $0.children.count > 1 }.count
-        let toEnd = stored.substrings.filter { $0.children.contains(end) }.count
-        let replicas = stored.replicas.count
-        add(
-            "\(label): not sound, in a note with \(replicas <= 3 ? "\(replicas)" : replicas <= 10 ? "4 to 10" : "over 10") replicas, "
-                + "\(branched == 0 ? "no" : "some") substrings with more than one child, "
-                + "\(toEnd <= 1 ? "\(toEnd)" : "more than 1") that point to the end marker",
-            1
-        )
-    }
-
-    /// A character of a document's merge state, with its style timestamp.
-    private struct StoredCharacter: Hashable {
-        var replica: [UInt8]
-        var clock: Int
-        var isDeleted = false
-        var styleReplica: [UInt8] = []
-        var styleClock = 0
-
-        var identifier: StoredCharacter { StoredCharacter(replica: replica, clock: clock) }
-    }
-
-    /// Returns what an edit of one range broke, as descriptions without any of the note's contents.
-    ///
-    /// An edit must keep the text and the attributes outside its range,
-    /// and every character that the document recorded, in order, with its deletion state and style timestamp.
-    /// - Parameters:
-    ///   - replaced: The range of the text that the edit deleted.
-    ///   - inserted: The number of UTF-16 code units that the edit inserted at the start of the range.
-    ///   - restyled: The range whose attributes and style timestamps the edit may change, for a style operation.
-    private func consistencyFailures(
-        before: StoredNote,
-        after: StoredNote,
-        replaced: Range<Int>,
-        inserted: Int,
-        restyled: Range<Int>?
-    ) -> [String] {
-        var failures = after.brokenInvariants.map { "afterwards it is not true that \($0.rawValue)" }
-        func require(_ condition: Bool, _ failure: String) {
-            if !condition { failures.append(failure) }
-        }
-        func characters(_ note: StoredNote) -> [StoredCharacter] {
-            func uuid(_ replica: Int) -> [UInt8] { replica >= 1 && replica <= note.replicas.count ? note.replicas[replica - 1].uuid : [] }
-            return note.substrings.flatMap { substring -> [StoredCharacter] in
-                let id = substring.id
-                let style = substring.styleTimestamp
-                return (0 ..< (substring.isEnd ? 0 : substring.length)).map {
-                    StoredCharacter(
-                        replica: uuid(id.replica),
-                        clock: id.clock + $0,
-                        isDeleted: substring.isTombstone,
-                        styleReplica: uuid(style.replica),
-                        styleClock: style.clock
-                    )
-                }
-            }
-        }
-        func attributes(_ note: StoredNote) -> [WireMessage] {
-            note.runs.flatMap { run -> [WireMessage] in
-                var message = run.message
-                message.set(1, nil)
-                return Array(repeating: message, count: max(0, run.length))
-            }
-        }
-
-        var reached: Set<Int> = [0]
-        for index in after.substrings.indices where reached.contains(index) {
-            reached.formUnion(after.substrings[index].children)
-        }
-        require(reached.count == after.substrings.count, "a substring can't be reached from the first")
-
-        let old = Array(before.text.utf16)
-        let new = Array(after.text.utf16)
-        let tail = old.count - replaced.upperBound
-        require(new.count == old.count - replaced.count + inserted, "the text has another length than expected")
-        require(new.prefix(replaced.lowerBound) == old.prefix(replaced.lowerBound), "the text before the edit changed")
-        require(new.suffix(tail) == old.suffix(tail), "the text after the edit changed")
-
-        let kept = restyled ?? replaced
-        let oldAttributes = attributes(before)
-        let newAttributes = attributes(after)
-        require(newAttributes.prefix(kept.lowerBound) == oldAttributes.prefix(kept.lowerBound), "the attributes before the edit changed")
-        let keptTail = old.count - kept.upperBound
-        require(newAttributes.suffix(keptTail) == oldAttributes.suffix(keptTail), "the attributes after the edit changed")
-        require(Array(after.replicas.prefix(before.replicas.count)) == before.replicas, "the entry of an earlier replica changed")
-        require(after.replicas.count == before.replicas.count + 1, "the edit did not add one replica")
-
-        let oldCharacters = characters(before)
-        let newCharacters = characters(after)
-        let oldIdentifiers = Set(oldCharacters.map(\.identifier))
-        require(Set(newCharacters.map(\.identifier)).count == newCharacters.count, "two characters have one identifier")
-        let survivors = newCharacters.filter { oldIdentifiers.contains($0.identifier) }
-        require(survivors.map(\.identifier) == oldCharacters.map(\.identifier), "a character is lost or out of order")
-        if survivors.count == oldCharacters.count {
-            var position = 0
-            var deletionsAsExpected = true
-            var timestampsKept = true
-            for (was, now) in zip(oldCharacters, survivors) {
-                let isInRange = !was.isDeleted && replaced.contains(position)
-                let mayBeRestyled = !was.isDeleted && (restyled?.contains(position) ?? false)
-                if now.isDeleted != (was.isDeleted || isInRange) { deletionsAsExpected = false }
-                if !isInRange, !mayBeRestyled, (now.styleReplica, now.styleClock) != (was.styleReplica, was.styleClock) { timestampsKept = false }
-                if !was.isDeleted { position += 1 }
-            }
-            require(deletionsAsExpected, "a character outside the range is deleted, or one inside it is not")
-            require(timestampsKept, "a style timestamp outside the edit changed")
-        }
-
-        let added = newCharacters.filter { !oldIdentifiers.contains($0.identifier) }
-        let editor = after.replicas.count > before.replicas.count ? after.replicas[after.replicas.count - 1].uuid : []
-        require(added.count == inserted, "the number of new characters is not the number inserted")
-        require(added.allSatisfy { $0.replica == editor && !$0.isDeleted }, "a new character is deleted, or is not the new replica's")
-        let visible = newCharacters.filter { !$0.isDeleted }
-        let positions = visible.indices.filter { !oldIdentifiers.contains(visible[$0].identifier) }
-        require(positions == Array(replaced.lowerBound ..< replaced.lowerBound + added.count), "the new characters are not where the edit was")
-        return failures
     }
 
     /// Counts the fields and values of a note's attribute runs.
