@@ -17,11 +17,15 @@ public struct SmartFolder: Sendable, Hashable, Identifiable {
     public let parentID: Folder.ID?
     /// The account that owns the smart folder, if the database records one.
     public let account: Account?
-    /// The query that selects the folder's notes, as the JSON text that Notes stores.
+    /// The query that selects the folder's notes, as the text that Notes stores.
     ///
-    /// TopoText doesn't interpret the query.
-    /// Notes stores it as `{"entity":"note","type":{"and":[{"deleted":false}, …]}}`,
-    /// where the clauses after the `deleted` clause are the folder's rules.
+    /// The text is never empty.
+    /// TopoText doesn't interpret the query or check that it is valid JSON.
+    /// One project reports that the query looks like
+    /// `{"entity":"note","type":{"and":[{"deleted":false}, …]}}`,
+    /// with the folder's rules after the `deleted` clause.
+    /// That form is an example that has not been checked against Notes;
+    /// don't depend on it.
     public let query: String
 
     /// Creates a smart folder.

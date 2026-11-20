@@ -4,7 +4,8 @@ extension Note {
     /// A tag in a note, such as `#groceries`.
     ///
     /// Notes stores a tag as an inline attachment in the note's text.
-    /// ``Store/tags(for:)`` lists the tags of notes without decoding their contents.
+    /// ``Store/tags(for:)`` lists the tags of notes from the attachments' database rows,
+    /// without decoding their contents.
     public struct Tag: Sendable, Hashable {
         /// The tag without its leading `#`, as it first appears in the note.
         public let name: String
@@ -35,6 +36,8 @@ extension Note {
     /// A link from one note to another.
     ///
     /// Notes stores the link as an inline attachment in the source note's text.
+    /// A link to a note can also be stored on a text run, as ``Note/TextRun/link``;
+    /// ``Store/links(from:)`` and ``Store/backlinks(to:)`` don't read those.
     /// The target note may no longer exist; check with ``Store/note(for:)``.
     public struct Link: Sendable, Hashable {
         /// The note that holds the link.
@@ -61,7 +64,10 @@ extension Note {
 public struct TagSummary: Sendable, Hashable {
     /// The tag, spelled as in the most recently edited note that has it.
     public let tag: Note.Tag
-    /// The number of notes that have the tag.
+    /// The number of notes that have a row of the tag in the database, which is never negative.
+    ///
+    /// A row can remain after its tag leaves the text, so the count can be higher than
+    /// the number of notes whose text shows the tag.
     public let noteCount: Int
 
     /// Creates a summary.
