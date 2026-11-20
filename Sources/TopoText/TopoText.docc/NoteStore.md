@@ -175,8 +175,10 @@ the field that ACNP calls `version` is `minimumSupportedVersion`.
 Runs also have `writingDirection` [11], `timestamp` [13] ("not used, for future compatibility" in PROTO),
 and `systemAttachmentInfo` [15] (ICMD).
 Paragraph styles also have `writingDirection` [3], `paragraphHints` [6], and `uuid` [9], which holds 16 bytes (ICMD).
-The Notes web app writes body text with `style_type` 3 (ICMD);
-the run on macOS found no such value, so Notes on macOS leaves the style out for body text **[inference]**.
+The Notes web app writes body text with `style_type` 3 (ICMD).
+Notes on macOS doesn't: the runs on macOS found no such value,
+and found a paragraph style on 99 of 100 runs, half of them without a `style_type`.
+So on macOS, body text has a paragraph style with no `style_type` **[inference]**.
 
 Reading the text:
 
@@ -235,6 +237,7 @@ The schema is PROTO's. What the fields hold:
 - **[inference]** `ZICNOTEDATA.ZDATA` holds the same message as the field that iCloud syncs.
   ACNP and DUN read fields 2, 3, and 5 from the database, and ICMD reads the same fields from iCloud,
   but ICMD never saw a database, and ACNP and DUN never decoded the merge state.
+  The run on macOS 27.0.1 supports it: every stored document had the structure that ICMD describes.
 
 What a local edit changes (ICMD, from the Notes web app's requests and code):
 
@@ -260,16 +263,26 @@ What a local edit changes (ICMD, from the Notes web app's requests and code):
   An edit that only made a substring grow leaves the style clock alone,
   and one that added a substring leaves it at 1 or more.
 
-Choices that TopoText's edit engine makes where no source decides:
+Choices that TopoText's edit engine makes where no source decides.
+The counts are from the run on macOS 27.0.1 that the last section describes:
 
-- **[inference]** A new paragraph of body text gets a run with a length and nothing else,
-  and a new list paragraph gets a paragraph style with only `style_type` and, for a checklist item, `checklist`.
-  The web app writes every field of a paragraph style, zero or not (ICMD); what Notes on macOS writes is not known.
+- **[inference]** A new paragraph gets a paragraph style with `style_type` for a list and none for body text,
+  `writingDirection` [3] with the value of the nearest paragraph that has one,
+  and `checklist` for a checklist item.
+  89 of 100 stored styles had field 3; its values were not counted in that run.
+  In a note where no style has field 3, new body text gets a run without a paragraph style, as 1 of 100 stored runs was.
 - **[inference]** A list style on a new paragraph counts as a style operation on its text, as it does in ICMD.
-- **[inference]** A new checklist item's `uuid` is the 16 bytes of a random UUID.
-  ICMD does the same, and reports that the web app gives an item a new identifier freely.
-- **[inference]** The engine does not write run field 13 or paragraph style field 9 on new text.
-  A run that is split keeps both fields on both parts.
+- A new checklist item's `uuid` is the 16 bytes of a random UUID.
+  All 959 stored identifiers were version 4 UUIDs, and no two paragraphs shared one.
+- **[inference]** The engine does not write paragraph style field 9 on a new paragraph.
+  28 of 100 stored styles had it, in 16 bytes, so Notes reads styles without it.
+  Which paragraphs get one is not known.
+- **[inference]** The engine does not write run field 13 on the run of a new paragraph.
+  92 of 100 stored runs had it, so the usual run has one, but what value belongs on new text is not known.
+  Text that is inserted into a paragraph takes the field with the other attributes of its neighbor,
+  and a run that is split keeps fields 9 and 13 on both parts.
+- The gzip header that the engine writes has the operating system byte 19, as 1,551 of 1,566 stored documents had.
+  The other 15 had 3; what wrote them is not known.
 
 Not known:
 
@@ -277,10 +290,8 @@ Not known:
   ICMD's rules were checked against iCloud and other devices, not against the database.
 - Where a device keeps its own replica UUID, and whether Notes checks it.
 - What run field 13 and paragraph style field 9 mean.
-
-`Tools/Validate` checks, for each note of a real database, that the document encodes to its stored bytes
-and has each property that the edit engine relies on.
-No run of that check is recorded here yet.
+- What value paragraph style field 3 has, and which client writes the gzip operating system byte 3.
+  `Tools/Validate` counts both.
 
 ## Attachments
 
@@ -441,6 +452,32 @@ A run on macOS 27 found the following:
   and when the first line has an inline attachment, it includes the attachment's text.
   Other titles don't appear in the text at all, for reasons that are not known yet.
   TopoText returns `ZTITLE1` as the title.
+
+A run on 2026-11-20, on macOS 27.0.1, checked the stored documents of the 1,566 unlocked notes
+against what the edit engine relies on:
+
+- Every document encodes to its stored bytes, and the stored bytes are in the canonical form,
+  so a field that an edit writes has the same form as the fields around it.
+- Every document has every property that the engine requires before it edits:
+  one version, a vector timestamp, replicas with 16-byte UUIDs and no `subclock`,
+  an end marker as the last substring, substring and run lengths that add up to the text,
+  clocks within each replica's text clock, tombstones of 1, and children that come later in the list.
+- The messages have only the fields that the format notes name:
+  `String` 2 to 5, `Substring` 1 to 5, and `Clock` 1 and 2. `minimumSupportedVersion` is 0.
+- Every replica has two clocks.
+  The first substring is the empty one with the identifier (0, 0),
+  and the end marker has the style timestamp (0, 0xFFFFFFFF).
+- 1,334 notes have one replica, and 3 have more than ten.
+- 159,914 of 232,751 substrings have a tombstone: most of what a document holds is deleted text.
+  5 substrings have more than one child.
+- 95,059 of 95,947 runs have a paragraph style, and 46,472 styles have a `style_type`.
+  Paragraph style field 3 is on 84,446 styles and field 9, in 16 bytes, on 26,717. Run field 13 is on 88,020 runs.
+- The 959 checklist runs have identifiers of 16 bytes that are version 4 UUIDs, and no identifier is in two paragraphs.
+- The gzip header has no flags. Its operating system byte is 19 in 1,551 documents and 3 in 15.
+- An edit that the tool applied in memory, which appended a checklist item, passed the tool's check in 1,563 documents and failed it in 3.
+  The check compared whole substrings, child indexes included.
+  In a document where an earlier substring points to the end marker, an insertion at the end changes that index, and the check counted it as a failure.
+  Whether that explains the 3 is not confirmed; the tool now reports which check fails.
 
 ## Not read
 

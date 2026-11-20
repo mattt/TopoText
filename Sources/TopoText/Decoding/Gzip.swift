@@ -66,7 +66,7 @@ extension Data {
     /// Compresses the data as gzip (RFC 1952), the format of note contents.
     ///
     /// The header has no optional fields and no modification time.
-    /// Its operating system byte is 19, the value that zlib writes on macOS; readers ignore it.
+    /// Its operating system byte is 19, as in most stored documents; a few have 3, and readers ignore the byte.
     /// The compressed bytes can differ from those that Notes wrote for the same data,
     /// because deflate allows many encodings of one input.
     /// - Throws: An error from Foundation if the data can't be compressed.
