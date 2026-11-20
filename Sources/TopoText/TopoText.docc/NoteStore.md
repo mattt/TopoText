@@ -278,6 +278,10 @@ Not known:
 - Where a device keeps its own replica UUID, and whether Notes checks it.
 - What run field 13 and paragraph style field 9 mean.
 
+`Tools/Validate` checks, for each note of a real database, that the document encodes to its stored bytes
+and has each property that the edit engine relies on.
+No run of that check is recorded here yet.
+
 ## Attachments
 
 TopoText finds each attachment's row by `ZIDENTIFIER`, from the run's `attachment_identifier` (ACNP).

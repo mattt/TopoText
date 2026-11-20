@@ -98,6 +98,7 @@ swift run Validate --applescript
 
 The tool prints only counts, never titles or text,
 and compares its count of notes with the one from AppleScript.
+It also checks that each note's stored document encodes back to the same bytes.
 Your terminal needs Full Disk Access to run it.
 
 The [format notes](Sources/TopoText/TopoText.docc/NoteStore.md)
