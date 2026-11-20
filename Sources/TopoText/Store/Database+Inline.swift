@@ -50,7 +50,7 @@ extension Database {
     /// Locked notes are left out, because their contents are encrypted,
     /// and so are uses that are marked for deletion.
     /// Notes in Recently Deleted are left out unless `includingRecentlyDeleted` is set.
-    /// A use whose attachment Notes has removed from the text can remain in the database for a while.
+    /// If a row remains after Notes removes its attachment from the text, its use is still returned.
     /// - Parameters:
     ///   - type: The type identifier of the inline attachment.
     ///   - noteIDs: The notes to read, or `nil` for every note.

@@ -244,8 +244,8 @@ public actor Store {
     /// A tag counts for a note if the database has a row of a tag attachment for the note
     /// that Notes hasn't marked for deletion.
     /// The tags come from the database's rows of tag attachments, not from the note's text.
-    /// A row can remain for a while after its tag leaves the text,
-    /// so a note can have a tag that its contents no longer show.
+    /// TopoText doesn't check the rows against the text:
+    /// if a row remains after its tag leaves the text, the note still has the tag here.
     /// To read the tags that the text shows, decode the note with ``content(for:)``.
     /// Notes that are locked, in Recently Deleted, or unknown to Notes have no entry;
     /// a note without tags has none either.
@@ -274,8 +274,8 @@ public actor Store {
     /// Returns the links from notes to other notes, without decoding their contents.
     ///
     /// The links come from the database's rows of inline note links, not from the note's text.
-    /// A row can remain for a while after its link leaves the text,
-    /// so a result can include a link that the text no longer shows.
+    /// TopoText doesn't check the rows against the text:
+    /// if a row remains after its link leaves the text, the result still includes the link.
     /// A link to a note that is stored on a text run, as ``Note/TextRun/link``, has no such row
     /// and is not included; to find it, decode the note with ``content(for:)``
     /// and read ``Note/TextRun/linkedNoteID``.

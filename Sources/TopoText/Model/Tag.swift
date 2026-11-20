@@ -64,9 +64,9 @@ extension Note {
 public struct TagSummary: Sendable, Hashable {
     /// The tag, spelled as in the most recently edited note that has it.
     public let tag: Note.Tag
-    /// The number of notes that have a row of the tag in the database, which is never negative.
+    /// The number of notes that have a row of the tag in the database.
     ///
-    /// A row can remain after its tag leaves the text, so the count can be higher than
+    /// If a row remains after its tag leaves the text, the count is higher than
     /// the number of notes whose text shows the tag.
     public let noteCount: Int
 

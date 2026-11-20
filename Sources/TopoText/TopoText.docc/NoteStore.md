@@ -192,9 +192,10 @@ so these reads throw `unsupportedSchema` rather than read every note as unlocked
 `note/<identifier>`, ignoring ASCII case, and then parses each link.
 
 The results follow the rows, not the text.
-The row of an attachment that was deleted from the text may remain until Notes removes it;
-this has not been observed in a real database yet.
-If it holds, a note can have a tag or a link that its text no longer shows,
+The row of an attachment that was deleted from the text may remain until Notes removes it.
+On macOS 27.0.1, a check soon after a tag was deleted from a note found no such row in the results;
+other edits, and links, have not been checked.
+If a row remains, a note can have a tag or a link that its text no longer shows,
 and a tag's note count can be higher than the number of notes whose text shows the tag.
 Links cover inline note links only:
 a link to a note that is stored on a text run, as `applenotes:note/…` in `link`,
