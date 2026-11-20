@@ -19,13 +19,14 @@ public struct SmartFolder: Sendable, Hashable, Identifiable {
     public let account: Account?
     /// The query that selects the folder's notes, as the text that Notes stores.
     ///
-    /// The text is never empty.
+    /// A smart folder that ``Store/smartFolders()`` returns never has an empty query.
     /// TopoText doesn't interpret the query or check that it is valid JSON.
-    /// One project reports that the query looks like
-    /// `{"entity":"note","type":{"and":[{"deleted":false}, …]}}`,
-    /// with the folder's rules after the `deleted` clause.
-    /// That form is an example that has not been checked against Notes;
-    /// don't depend on it.
+    /// On macOS 27.0.1, Notes stored a smart folder with one tag rule as
+    /// `{"type":{"and":[{"deleted":false},{"and":[{"and":[{"deleted":false},{"and":[{"tag":"SMART"}]}]}]}]},"entity":"note"}`.
+    /// The rule sits in nested `and` clauses after the first `deleted` clause,
+    /// and the tag is in capitals, without its `#`.
+    /// Other kinds of rules have not been checked against Notes,
+    /// so don't depend on this form.
     public let query: String
 
     /// Creates a smart folder.

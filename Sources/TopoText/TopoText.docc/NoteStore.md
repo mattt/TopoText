@@ -335,5 +335,9 @@ A smart folder is an `ICFolder` row with a query in `ZSMARTFOLDERQUERYJSON`
 for every folder whose query is not NULL or empty, even if the query is not valid JSON.
 One project reports a query of the form `{"entity":"note","type":{"and":[{"deleted":false}, …]}}`
 (sweetrb).
-That form is an example that has not been checked against a real database;
+On macOS 27.0.1, a smart folder with one tag rule had the query
+`{"type":{"and":[{"deleted":false},{"and":[{"and":[{"deleted":false},{"and":[{"tag":"SMART"}]}]}]}]},"entity":"note"}`:
+the rule sits in nested `and` clauses after the first `deleted` clause,
+and the tag is in capitals, without its `#`.
+Other kinds of rules have not been checked against a real database.
 TopoText doesn't interpret the query or evaluate it against notes.
