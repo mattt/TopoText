@@ -85,7 +85,7 @@ extension Database {
         if let target {
             // LIKE ignores the case of ASCII letters, as links can carry the identifier in lowercase.
             conditions.append("\(column("i", "ZTOKENCONTENTIDENTIFIER")) LIKE ? ESCAPE '\\'")
-            bindings.append(.text("%note/\(Self.escapedForLike(target.description))%"))
+            bindings.append(.text("%\(Self.escapedForLike(target.description))%"))
         }
         let select = """
             SELECT n.ZIDENTIFIER, \(column("i", "ZALTTEXT")), \(column("i", "ZTOKENCONTENTIDENTIFIER")), \(sortColumn)

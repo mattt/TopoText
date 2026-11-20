@@ -23,13 +23,14 @@ struct DecodedInline: Sendable {
 
 /// Describes the form of a stored value without what it identifies.
 ///
-/// Punctuation stays, and so do the words of the documented link form, `applenotes:note/…?ownerIdentifier=…`.
+/// Punctuation stays, and so do the words of the known link forms,
+/// `applenotes://showNote?identifier=…` and `applenotes:note/…?ownerIdentifier=…`.
 /// Every other run of letters, digits, and hyphens becomes its length and kind,
 /// so `applenotes:note/0E5A3C7D-1111-4B4B-8C8C-000000000001` becomes
 /// `applenotes:note/<36 hex digits and hyphens, uppercase>`.
 func maskedShape(_ text: String?) -> String {
     guard let text else { return "none" }
-    let known: Set<String> = ["applenotes", "note", "owneridentifier"]
+    let known: Set<String> = ["applenotes", "note", "owneridentifier", "shownote", "identifier"]
     var shape = ""
     var run = ""
     func flush() {

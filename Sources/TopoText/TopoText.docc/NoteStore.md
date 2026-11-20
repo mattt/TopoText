@@ -89,7 +89,7 @@ A note row is listed only when all of these are true:
 
 Columns:
 
-- `ZIDENTIFIER`: the note's UUID, the same on every device and in `applenotes:note/<identifier>` links.
+- `ZIDENTIFIER`: the note's UUID, the same on every device and in `applenotes:` links to the note.
 - `ZTITLE1`: the title.
 - `ZSNIPPET`, then `ZWIDGETSNIPPET` (iOS 17 and later): the preview.
   cupertino found `ZWIDGETSNIPPET` on more notes than `ZSNIPPET`.
@@ -178,7 +178,9 @@ Inline attachments (`ICInlineAttachment`) have types that start with
 
 - `.hashtag`: `ZALTTEXT` is the tag, such as `#groceries`.
 - `.mention`: `ZALTTEXT` is the text, and `ZTOKENCONTENTIDENTIFIER` identifies the participant.
-- `.link`: `ZALTTEXT` is the label, and `ZTOKENCONTENTIDENTIFIER` is an `applenotes:note/…` link.
+- `.link`: `ZALTTEXT` is the label, and `ZTOKENCONTENTIDENTIFIER` is an `applenotes:` link.
+  On macOS 27.0.1 the link is `applenotes://showNote?identifier=<identifier>`, with the identifier in uppercase.
+  Other sources describe `applenotes:note/<identifier>`; TopoText reads both forms.
   The link can carry the note's identifier in lowercase, and OBS uppercases it to find the note.
 - `.calculateresult` and `.calculategraphexpression`: `ZALTTEXT` is the text.
 
@@ -189,12 +191,13 @@ They skip rows with `ZMARKEDFORDELETION`, and rows of locked notes and of Recent
 Without `ZISPASSWORDPROTECTED`, a locked note can't be told apart,
 so these reads throw `unsupportedSchema` rather than read every note as unlocked.
 `Store.backlinks(to:)` selects the rows whose `ZTOKENCONTENTIDENTIFIER` contains
-`note/<identifier>`, ignoring ASCII case, and then parses each link.
+the identifier, ignoring ASCII case, and then parses each link.
 
 The results follow the rows, not the text.
 The row of an attachment that was deleted from the text may remain until Notes removes it.
-On macOS 27.0.1, a check soon after a tag was deleted from a note found no such row in the results;
-other edits, and links, have not been checked.
+On macOS 27.0.1, a check soon after a tag was deleted from a note found no such row in the results,
+and the row of a deleted link remained with `ZMARKEDFORDELETION` set, which these reads skip.
+Other edits have not been checked.
 If a row remains, a note can have a tag or a link that its text no longer shows,
 and a tag's note count can be higher than the number of notes whose text shows the tag.
 Links cover inline note links only:

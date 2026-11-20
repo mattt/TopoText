@@ -112,6 +112,21 @@ import Testing
         #expect(try await store.backlinks(to: target) == [Note.Link(sourceID: .id("NOTE-PIE"), targetID: target, label: "Linked")])
     }
 
+    @Test("A link in the form that Notes stores on macOS 27 is read in both directions")
+    func showNoteLink() async throws {
+        let id = "0E5A3C7D-3333-4B4B-8C8C-000000000003"
+        try folder.execute(
+            """
+            INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTYPEUTI1, ZALTTEXT, ZTOKENCONTENTIDENTIFIER, ZNOTE1, ZMARKEDFORDELETION) VALUES
+                (73, 9, 'LINK-SHOW', 'com.apple.notes.inlinetextattachment.link', 'Shown', 'applenotes://showNote?identifier=\(id)', 21, 0),
+                (74, 9, 'LINK-GONE', 'com.apple.notes.inlinetextattachment.link', 'Gone', 'applenotes://showNote?identifier=\(id)', 20, 1);
+            """
+        )
+        let link = Note.Link(sourceID: .id("NOTE-PIE"), targetID: .id(id), label: "Shown")
+        #expect(try await store.links(from: [.id("NOTE-PIE")])[.id("NOTE-PIE")]?.last == link)
+        #expect(try await store.backlinks(to: .id(id)) == [link])
+    }
+
     @Test("A backlink target with LIKE wildcards matches only itself")
     func backlinkWildcards() async throws {
         #expect(try await store.backlinks(to: .id("%")).isEmpty)
