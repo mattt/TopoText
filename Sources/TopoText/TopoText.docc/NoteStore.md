@@ -24,6 +24,18 @@ The earliest and most original sources are these two projects:
   cited as DUN at [`582e569`](https://github.com/dunhamsteve/notesutils/blob/582e569c9d0a6b398e91099260eaf761366a5f68/notes.md):
   the table CRDT, including how deleted and repeated rows and columns are left out.
 
+Two sources describe the merge state of a note, which the first two leave out:
+
+- Apple's own schema files, `topotext.proto` and `versioned-document.proto`,
+  which the Notes web app once shipped (DUN mentions them).
+  A copy is in [ElyaConrad/iCloud-API@7edb504](https://github.com/ElyaConrad/iCloud-API/tree/7edb504f1727066192178c8dd4cdb1d09742333f/resources/protobuf),
+  cited as PROTO. The comments in the files are Apple's.
+- [coddingtonbear/icloud-md@ffa20ef](https://github.com/coddingtonbear/icloud-md/tree/ffa20ef6378a453f0935d26f03acedf3e58540f2)
+  (MIT), cited as ICMD: `proto/topotext.proto`, `src/notes/noteDocument.ts`, and `src/notes/formatReconcile.ts`.
+  The project edits notes through iCloud's web interface.
+  Its comments record what the Notes web app and Notes on iOS wrote in captured requests,
+  and what the web app's code does.
+
 Later projects confirm these facts on newer releases and add a few:
 
 | Short name | Repository and commit |
@@ -155,6 +167,17 @@ Values:
 - `emphasis_style`: the highlight color, 1 purple, 2 pink, 3 orange, 4 mint, 5 blue.
 - `ParagraphStyle` field 7 is the starting number of a numbered list (BTT; sweetrb).
 
+The messages have more fields than these, and Apple's names differ (PROTO):
+`NoteStoreProto` is `Document`, with `serializationVersion` [1] and repeated `Version` [2].
+ACNP's `Document` is `Version`, with `serializationVersion` [1], `minimumSupportedVersion` [2], and `data` [3];
+the field that ACNP calls `version` is `minimumSupportedVersion`.
+`Note` is `String`, and its other fields are the merge state, described below.
+Runs also have `writingDirection` [11], `timestamp` [13] ("not used, for future compatibility" in PROTO),
+and `systemAttachmentInfo` [15] (ICMD).
+Paragraph styles also have `writingDirection` [3], `paragraphHints` [6], and `uuid` [9], which holds 16 bytes (ICMD).
+The Notes web app writes body text with `style_type` 3 (ICMD);
+the run on macOS found no such value, so Notes on macOS leaves the style out for body text **[inference]**.
+
 Reading the text:
 
 - Run lengths count UTF-16 code units (BTT; sweetrb).
@@ -163,6 +186,97 @@ Reading the text:
   For an empty paragraph, that character is its line feed.
 - Text past the last run is body text.
 - Each attachment stands in the text as U+FFFC, in a run with `attachment_info`.
+
+## Merge state
+
+Notes combines the edits of several devices without a server that orders them.
+For that, the stored document records who inserted each character and when,
+and keeps deleted characters.
+``Store`` doesn't read this state.
+The edit engine (`StoredNote` and `NoteEditor`) keeps it and updates it.
+
+```proto
+message String {
+  optional string string = 2; repeated Substring substring = 3; optional VectorTimestamp timestamp = 4;
+  repeated AttributeRun attributeRun = 5; repeated Attachment attachment = 6; }
+message Substring {
+  optional CharID charID = 1; optional uint32 length = 2; optional CharID timestamp = 3;
+  optional bool tombstone = 4; repeated uint32 child = 5; }
+message CharID { optional uint32 replicaID = 1; optional uint32 clock = 2; }
+message VectorTimestamp { repeated Clock clock = 1; }
+message Clock { optional bytes replicaUUID = 1; repeated ReplicaClock replicaClock = 2; }
+message ReplicaClock { optional uint32 clock = 1; optional uint32 subclock = 2; }
+```
+
+The schema is PROTO's. What the fields hold:
+
+- A substring is a run of characters that one replica inserted together.
+  `charID` identifies its first character, and each following character has the next clock value (DUN; ICMD).
+  `length` counts UTF-16 code units (PROTO).
+- The substrings are in the order of the text.
+  The text is the substrings without a `tombstone`, joined (ICMD).
+  A substring with a `tombstone` holds deleted characters, which stay in the document for merging (DUN; ICMD).
+- The first substring has no characters and the identifier (0, 0).
+  The last has no characters and the identifier (0, 0xFFFFFFFF) (ICMD).
+- `child` holds indexes into the substring list (PROTO).
+  They are the edges of the graph of insertions, and each one points to a later substring.
+  In a document that one device wrote in order, each substring has the next one as its only child.
+  After concurrent insertions at one place, a substring has several children (ICMD; DUN: "it forms a DAG").
+- `timestamp` on a substring is its style timestamp (PROTO):
+  the replica that last set the style of the characters, and that replica's style clock at the time.
+  New text has the clock 0 (ICMD).
+- The vector timestamp has an entry for each replica that edited the note, with a 16-byte UUID.
+  `replicaID` is a 1-based index into the entries; 0 belongs to the first and last substrings (ICMD).
+- A replica has two clocks.
+  The first is its text clock: the number of UTF-16 code units that it has inserted.
+  The second is its style clock: the number of its next style operation (ICMD).
+  No source has seen `subclock` set.
+- Table cells are `String` messages without a vector timestamp (ICMD).
+- **[inference]** `ZICNOTEDATA.ZDATA` holds the same message as the field that iCloud syncs.
+  ACNP and DUN read fields 2, 3, and 5 from the database, and ICMD reads the same fields from iCloud,
+  but ICMD never saw a database, and ACNP and DUN never decoded the merge state.
+
+What a local edit changes (ICMD, from the Notes web app's requests and code):
+
+- A replica that is new to the document gets an entry,
+  with both clocks at the highest values among the other entries.
+- Inserted text becomes a substring with the identifier (replica, text clock) and the style timestamp (replica, 0).
+  The text clock advances by the length.
+  If the substring before it holds the replica's newest characters, that substring grows instead.
+- The new substring goes between its neighbors in the list.
+  It takes the place of the edge between them,
+  or, when they have no edge, takes over the children of the substring before it and becomes that one's only child.
+- A substring that an edit covers in part is split.
+  The second part continues the clock, keeps the style timestamp and the tombstone,
+  takes over the children, and becomes the only child of the first part.
+- Deleted text gets a `tombstone` of 1 and a new style timestamp, (replica, max(old clock + 8, floor)).
+  A deletion counts as a style operation, and the 8 lets it win against concurrent style changes.
+- A style change, such as a checklist item's state, gives the text (replica, max(old clock + 1, floor)).
+- The floor is the highest style timestamp in the document,
+  plus one if that timestamp would win a tie against the replica.
+  Timestamps compare by clock, then by the bytes of the replica's UUID.
+  The floor is never below the replica's own style clock.
+- Afterwards the replica's style clock is one past the highest clock that the edit wrote.
+  An edit that only made a substring grow leaves the style clock alone,
+  and one that added a substring leaves it at 1 or more.
+
+Choices that TopoText's edit engine makes where no source decides:
+
+- **[inference]** A new paragraph of body text gets a run with a length and nothing else,
+  and a new list paragraph gets a paragraph style with only `style_type` and, for a checklist item, `checklist`.
+  The web app writes every field of a paragraph style, zero or not (ICMD); what Notes on macOS writes is not known.
+- **[inference]** A list style on a new paragraph counts as a style operation on its text, as it does in ICMD.
+- **[inference]** A new checklist item's `uuid` is the 16 bytes of a random UUID.
+  ICMD does the same, and reports that the web app gives an item a new identifier freely.
+- **[inference]** The engine does not write run field 13 or paragraph style field 9 on new text.
+  A run that is split keeps both fields on both parts.
+
+Not known:
+
+- Whether Notes on macOS accepts, from its own database, a replica that it did not create.
+  ICMD's rules were checked against iCloud and other devices, not against the database.
+- Where a device keeps its own replica UUID, and whether Notes checks it.
+- What run field 13 and paragraph style field 9 mean.
 
 ## Attachments
 

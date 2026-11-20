@@ -127,6 +127,10 @@ These projects contributed specific findings:
   the starting number of numbered lists
 - 6over3's [NotesKit](https://github.com/6over3/NotesKit):
   following indirection in tables
+- coddingtonbear's [icloud-md](https://github.com/coddingtonbear/icloud-md):
+  how an edit updates the state that Notes merges with
+- ElyaConrad's [iCloud-API](https://github.com/ElyaConrad/iCloud-API):
+  a copy of Apple's schema for the note text format
 
 TopoText contains no code from these projects.
 
