@@ -5,6 +5,7 @@ import TopoText
 // Reads a real Notes database with TopoText and prints aggregate counts,
 // so that the decoders can be checked against real data without revealing it.
 // The output never contains titles, text, identifiers, file names, type identifiers, or tag names.
+// For note links it prints the form of the stored token, with each identifier replaced by its length and kind.
 //
 // Usage: swift run Validate [<path to group.com.apple.notes>] [--applescript] [--smart-folders]
 //
@@ -127,7 +128,10 @@ struct Tally: Sendable {
         switch attachment.kind {
         case .hashtag, .mention, .noteLink, .calculation, .inlineText:
             if attachment.displayText == nil { add("inline attachments\(place): without text") }
-            if attachment.kind == .noteLink, attachment.linkedNoteID == nil { add("inline links\(place): without a note identifier") }
+            if attachment.kind == .noteLink {
+                if attachment.linkedNoteID == nil { add("inline links\(place): without a note identifier") }
+                add("inline links\(place): token of the form \(maskedShape(attachment.tokenIdentifier))")
+            }
             if attachment.kind == .hashtag {
                 if let tag = attachment.displayText.flatMap(Note.Tag.init(_:)) {
                     found.tags.insert(tagKey(tag))

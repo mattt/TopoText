@@ -21,6 +21,44 @@ struct DecodedInline: Sendable {
     var runLinksToNotes = 0
 }
 
+/// Describes the form of a stored value without what it identifies.
+///
+/// Punctuation stays, and so do the words of the documented link form, `applenotes:note/…?ownerIdentifier=…`.
+/// Every other run of letters, digits, and hyphens becomes its length and kind,
+/// so `applenotes:note/0E5A3C7D-1111-4B4B-8C8C-000000000001` becomes
+/// `applenotes:note/<36 hex digits and hyphens, uppercase>`.
+func maskedShape(_ text: String?) -> String {
+    guard let text else { return "none" }
+    let known: Set<String> = ["applenotes", "note", "owneridentifier"]
+    var shape = ""
+    var run = ""
+    func flush() {
+        guard !run.isEmpty else { return }
+        defer { run = "" }
+        if known.contains(run.lowercased()) {
+            shape += run
+            return
+        }
+        let letters = run.filter(\.isLetter)
+        let letterCase =
+            letters.isEmpty
+            ? "" : letters.allSatisfy(\.isUppercase) ? ", uppercase" : letters.allSatisfy(\.isLowercase) ? ", lowercase" : ", mixed case"
+        let isHex = run.allSatisfy { $0 == "-" || $0.isHexDigit }
+        shape += "<\(run.count) \(isHex ? "hex digits and hyphens" : "letters and digits")\(letterCase)>"
+    }
+    for character in text {
+        // Characters outside ASCII are masked too, whatever they are.
+        if character.isLetter || character.isNumber || character == "-" || !character.isASCII {
+            run.append(character)
+        } else {
+            flush()
+            shape.append(character)
+        }
+    }
+    flush()
+    return shape
+}
+
 /// Returns a tag's name as Notes compares it: lowercased, without diacritics.
 ///
 /// TopoText compares tags the same way, but its key is internal.

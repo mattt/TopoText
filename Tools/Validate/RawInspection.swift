@@ -2,6 +2,7 @@
 // so a release build of the tool leaves it out. `swift run Validate` builds for debugging.
 #if DEBUG
     import Foundation
+    import SQLite3
     @testable import TopoText
 
     /// Counts the stored values behind the decoded contents: protocol buffer fields, style values that
@@ -40,8 +41,39 @@
                 }
                 cursor = result.nextCursor
             } while cursor != nil
+            try inspectLinkRows(database: database, add: add)
         }
         return counts
+    }
+
+    /// Counts what the rows of inline links to notes hold, for every note, without identifiers or text.
+    ///
+    /// For each row it counts the columns that have a value.
+    /// For a column whose name suggests a token, an identifier, or a URL, it also counts the form of the value,
+    /// with each identifier replaced by its length and kind.
+    private func inspectLinkRows(database: Database, add: (String, Int) -> Void) throws {
+        guard let entity = database.entities["ICInlineAttachment"] else { return }
+        let type = database.coalesce("i", "ZTYPEUTI1", "ZTYPEUTI")
+        let sql = "SELECT i.* FROM ZICCLOUDSYNCINGOBJECT i WHERE i.Z_ENT = ? AND \(type) = ?"
+        try database.query(sql, [.integer(entity), .text(Database.noteLinkType)]) { row in
+            add("link rows", 1)
+            for index in 0 ..< sqlite3_column_count(row.statement) {
+                guard let name = sqlite3_column_name(row.statement, index).map({ String(cString: $0) }) else { continue }
+                switch sqlite3_column_type(row.statement, index) {
+                case SQLITE_NULL:
+                    continue
+                case SQLITE_INTEGER, SQLITE_FLOAT:
+                    if row.double(index) != 0 { add("link rows: \(name) holds a number other than 0", 1) }
+                case SQLITE_TEXT:
+                    add("link rows: \(name) holds text", 1)
+                    if ["TOKEN", "IDENTIFIER", "URL"].contains(where: name.contains), !name.contains("UTI") {
+                        add("link rows: \(name) of the form \(maskedShape(row.text(index)))", 1)
+                    }
+                default:
+                    add("link rows: \(name) holds data", 1)
+                }
+            }
+        }
     }
 
     /// Counts the fields and values of a note's attribute runs.
