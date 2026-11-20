@@ -30,6 +30,7 @@
                         continue
                     }
                     inspectRuns(of: message, add: add)
+                    inspectStoredDocument(data, add: add)
                     let content = try database.content(of: note)
                     let category = titleCategory(title: note.title, content: content)
                     add("titles: \(category)")
@@ -73,6 +74,118 @@
                     add("link rows: \(name) holds data", 1)
                 }
             }
+        }
+    }
+
+    /// Checks what the edit engine assumes about a note's stored document, without changing anything.
+    ///
+    /// It decodes the whole document, encodes it, and compares the bytes.
+    /// It counts each invariant that the document lacks, and the forms of the merge state.
+    /// For a document with every invariant, it applies an edit in memory and checks the result.
+    /// The edit is never written anywhere.
+    /// Like the rest of the tool, it prints only counts and numbers that the format defines.
+    private func inspectStoredDocument(_ data: Data, add: (String, Int) -> Void) {
+        func bucket(_ count: Int) -> String {
+            count <= 3 ? "\(count)" : count <= 10 ? "4 to 10" : count <= 100 ? "11 to 100" : "over 100"
+        }
+        // The header's flags and operating system byte, which the gzip writer sets to 0 and 19.
+        if data.count > 9 {
+            add("gzip: flags \(data[data.startIndex + 3]), operating system byte \(data[data.startIndex + 9])", 1)
+        }
+        guard let protobuf = (try? data.gunzipped()).map(Array.init), let stored = try? StoredNote(protobuf: protobuf) else {
+            add("lossless: notes that don't decode as a stored document", 1)
+            return
+        }
+        add("lossless: notes decoded", 1)
+        add("lossless: encoding \(stored.protobuf() == protobuf ? "equals" : "differs from") the stored bytes", 1)
+        let canonical = (try? WireMessage(protobuf))?.reencoded(as: StoredNote.schema)
+        add("lossless: stored bytes \(canonical == protobuf ? "are" : "are not") in the canonical form", 1)
+        let recompressed = try? stored.data().gunzipped()
+        add("lossless: compressing and decompressing \(recompressed == Data(protobuf) ? "gives" : "does not give") the same bytes", 1)
+
+        let broken = stored.brokenInvariants
+        add(broken.isEmpty ? "invariants: notes with every invariant" : "invariants: notes without at least one", 1)
+        for invariant in broken {
+            add("invariants: not true that \(invariant.rawValue)", 1)
+        }
+
+        // The fields of each message of the merge state, to find any that the format notes don't name.
+        if let document = try? WireMessage(protobuf), let version = document.message(2), let string = version.message(3) {
+            for number in Set(document.fields.map(\.number)) { add("merge state: Document field \(number)", 1) }
+            for number in Set(version.fields.map(\.number)) { add("merge state: Version field \(number)", 1) }
+            for number in Set(string.fields.map(\.number)) { add("merge state: String field \(number)", 1) }
+            add("merge state: minimumSupportedVersion \(version.varint(2).map(String.init) ?? "absent")", 1)
+        }
+        add("merge state: notes with \(bucket(stored.replicas.count)) replicas", 1)
+        add("merge state: notes with \(bucket(stored.substrings.count)) substrings", 1)
+        for replica in stored.replicas {
+            add("merge state: replicas with \(replica.clocks.count) clocks", 1)
+            for number in Set(replica.message.fields.map(\.number)) { add("merge state: Clock field \(number)", 1) }
+        }
+        if let first = stored.substrings.first {
+            let isOrigin = first.id == .init(replica: 0, clock: 0) && first.length == 0
+            add("merge state: first substring \(isOrigin ? "is" : "is not") the empty one with the identifier (0, 0)", 1)
+        }
+        if let last = stored.substrings.last, last.isEnd {
+            let timestamp = last.styleTimestamp
+            let clock = timestamp.clock == StoredNote.Substring.endClock ? "the end clock" : "\(timestamp.clock == 0 ? "0" : "another clock")"
+            add("merge state: end marker with the style timestamp (\(timestamp.replica == 0 ? "0" : "a replica"), \(clock))", 1)
+        }
+        for substring in stored.substrings {
+            for number in Set(substring.message.fields.map(\.number)) { add("merge state: Substring field \(number)", 1) }
+            if substring.isTombstone { add("merge state: substrings with a tombstone of \(substring.tombstoneValue)", 1) }
+            if substring.children.count > 1 { add("merge state: substrings with more than one child", 1) }
+            if substring.message.values(5).contains(where: { if case .bytes = $0 { true } else { false } }) {
+                add("merge state: substrings with packed children", 1)
+            }
+            if !substring.isEnd, substring.id.replica != 0 {
+                add("merge state: substrings with a style clock of \(substring.styleTimestamp.clock == 0 ? "0" : "more than 0")", 1)
+            }
+        }
+
+        // Checklist identifiers: their length, their UUID version, and whether two paragraphs share one.
+        var paragraphsByItem: [[UInt8]: Set<Int>] = [:]
+        let starts = stored.paragraphRanges.map(\.content.lowerBound)
+        var offset = 0
+        for run in stored.runs {
+            defer { offset += max(0, run.length) }
+            if run.hasAttachment, run.length != 1 { add("runs: attachment runs with a length of \(bucket(run.length))", 1) }
+            if let identifier = run.paragraphStyle?.bytes(9) { add("runs: paragraph style field 9 of \(identifier.count) bytes", 1) }
+            guard let todo = run.todo else {
+                if run.styleType == 103 { add("checklists: runs with the checklist style and no state", 1) }
+                continue
+            }
+            let identifier = todo.bytes(1) ?? []
+            add("checklists: identifiers of \(identifier.count) bytes, UUID version \(identifier.count == 16 ? "\(identifier[6] >> 4)" : "none")", 1)
+            add("checklists: done value \(todo.varint(2).map(String.init) ?? "absent")", 1)
+            for position in offset ..< offset + max(0, run.length) {
+                paragraphsByItem[identifier, default: []].insert(starts.lastIndex { $0 <= position } ?? 0)
+            }
+        }
+        for paragraphs in paragraphsByItem.values {
+            add("checklists: identifiers in \(paragraphs.count == 1 ? "1 paragraph" : "more than 1 paragraph")", 1)
+        }
+
+        // An edit in memory: append a checklist item, then check that the result is sound and that the reader reads it.
+        guard broken.isEmpty else { return }
+        do {
+            let edited = try NoteEditor().apply([.appendParagraphs([.init("x", style: .checklist)])], to: stored)
+            let reread = try StoredNote(data: try edited.data())
+            let readerText = try NoteDocument(data: try edited.data()).text
+            let prefix = Array(stored.text.utf16)
+            let isSound =
+                reread.brokenInvariants.isEmpty && Array(reread.text.utf16.prefix(prefix.count)) == prefix
+                && Array(reread.substrings.prefix(max(0, stored.substrings.count - 2))) == Array(stored.substrings.dropLast(2))
+                && readerText == reread.text
+            add("trial edit in memory: \(isSound ? "sound" : "not sound")", 1)
+        } catch let error as NoteEditError {
+            if case .unsupportedDocument = error {
+                add("trial edit in memory: refused, unsupported document", 1)
+            } else {
+                add("trial edit in memory: refused for another reason", 1)
+            }
+        } catch {
+            add("trial edit in memory: failed", 1)
         }
     }
 

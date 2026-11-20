@@ -15,6 +15,10 @@ import TopoText
 // which needs permission to control Notes.
 // With --smart-folders, the tool also prints each smart folder's name and its stored query, unchanged.
 // This is the only option that prints stored text; use it only when that output can be shown.
+//
+// A debug build also checks what the edit engine assumes about each stored document (see RawInspection.swift):
+// that the document encodes to its stored bytes, and each invariant that an edit relies on.
+// It applies one edit to each document in memory, and never writes to the database.
 
 /// Counts of what the tool found, keyed by a label that describes the count.
 struct Tally: Sendable {
