@@ -34,8 +34,8 @@ public struct SmartFolder: Sendable, Hashable, Identifiable {
     ///   - name: The name of the smart folder.
     ///   - parentID: The folder that the smart folder is nested in, if any.
     ///   - account: The account that owns the smart folder, if any.
-    ///   - query: The stored query, as JSON text.
-    public init(id: ID, name: String, parentID: Folder.ID? = nil, account: Account? = nil, query: String) {
+    ///   - query: The stored query text, which is not empty.
+    init(id: ID, name: String, parentID: Folder.ID? = nil, account: Account? = nil, query: String) {
         self.id = id
         self.name = name
         self.parentID = parentID
