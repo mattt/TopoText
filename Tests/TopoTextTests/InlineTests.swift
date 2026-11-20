@@ -53,6 +53,15 @@ import Testing
         #expect(summaries.map(\.noteCount) == [2, 1, 1])
     }
 
+    @Test("Without a column that marks locked notes, tag and link reads report an unsupported schema")
+    func noLockColumn() async throws {
+        try folder.execute("ALTER TABLE ZICCLOUDSYNCINGOBJECT DROP COLUMN ZISPASSWORDPROTECTED")
+        await #expect(throws: NotesError.unsupportedSchema) { try await store.tags(for: [.id("NOTE-GROCERIES")]) }
+        await #expect(throws: NotesError.unsupportedSchema) { try await store.tags() }
+        await #expect(throws: NotesError.unsupportedSchema) { try await store.links(from: [.id("NOTE-GROCERIES")]) }
+        await #expect(throws: NotesError.unsupportedSchema) { try await store.backlinks(to: Self.target) }
+    }
+
     @Test("Recently Deleted notes count when asked")
     func tagSummariesIncludingDeleted() async throws {
         let summaries = try await store.tags(includingRecentlyDeleted: true)

@@ -55,16 +55,27 @@ extension Database {
     ///   - type: The type identifier of the inline attachment.
     ///   - noteIDs: The notes to read, or `nil` for every note.
     ///   - includingRecentlyDeleted: Whether notes in Recently Deleted count.
-    func inlineUses(of type: String, in noteIDs: [Note.ID]? = nil, includingRecentlyDeleted: Bool = false) throws -> [InlineUse] {
+    /// - Throws: ``NotesError/unsupportedSchema`` if the database has inline attachments
+    ///   but no column that marks locked notes; ``NotesError/connectionClosed``;
+    ///   or another ``NotesError`` if the database can't be read.
+    func inlineUses(
+        of type: String,
+        in noteIDs: [Note.ID]? = nil,
+        includingRecentlyDeleted: Bool = false
+    ) throws -> [InlineUse] {
+        try checkOpen()
         guard let entity = entities["ICInlineAttachment"] else { return [] }
+        // Without the lock column, a locked note can't be told apart, and its rows must not be read.
+        guard columns.contains("ZISPASSWORDPROTECTED") else { throw NotesError.unsupportedSchema }
         let notePK = coalesce("i", "ZNOTE1", "ZNOTE")
         var conditions = [
             "i.Z_ENT = ?",
             "\(coalesce("i", "ZTYPEUTI1", "ZTYPEUTI")) = ?",
             notMarkedForDeletion("i"),
             try isListedNote("n"),
-            "COALESCE(\(column("n", "ZISPASSWORDPROTECTED")), 0) = 0",
+            "COALESCE(n.ZISPASSWORDPROTECTED, 0) = 0",
         ]
+        let bindings: [Binding] = [.integer(entity), .text(type)]
         if !includingRecentlyDeleted {
             conditions.append("NOT \(isRecentlyDeleted("f"))")
         }
@@ -74,7 +85,6 @@ extension Database {
             JOIN ZICCLOUDSYNCINGOBJECT n ON n.Z_PK = \(notePK)
             LEFT JOIN ZICCLOUDSYNCINGOBJECT f ON f.Z_PK = \(column("n", "ZFOLDER"))
             """
-        let bindings: [Binding] = [.integer(entity), .text(type)]
         let transform: (Row) -> InlineUse? = { row in
             row.text(0).flatMap(Note.ID.init(_:)).map { InlineUse(noteID: $0, text: row.text(1), token: row.text(2)) }
         }

@@ -282,6 +282,9 @@ final class Leak<Value>: @unchecked Sendable {
         #expect(count == 4)
         #expect(text == "Apple pie")
         #expect(throws: NotesError.connectionClosed) { try leak.value?.folders() }
+        // Reads that can return without running a statement check the connection first.
+        #expect(throws: NotesError.connectionClosed) { try leak.value?.tags(for: []) }
+        #expect(throws: NotesError.connectionClosed) { try leak.value?.links(from: []) }
     }
 
     @Test("Operations run on the store's queue")
@@ -384,6 +387,23 @@ final class Leak<Value>: @unchecked Sendable {
         #expect(result.notes[0].snippet == "Old snippet")
         let content = try await store.content(for: .id("OLD-NOTE"))
         #expect(content.markdown() == "# Old note\n\n| A | B |\n| --- | --- |")
+    }
+
+    @Test("Without inline attachments, tags and links are empty, and an expired snapshot still throws")
+    func noInlineAttachments() async throws {
+        #expect(try await store.tags(for: [.id("OLD-NOTE")]).isEmpty)
+        #expect(try await store.tags().isEmpty)
+        #expect(try await store.links(from: [.id("OLD-NOTE")]).isEmpty)
+        #expect(try await store.backlinks(to: .id("OLD-NOTE")).isEmpty)
+        #expect(try await store.smartFolders().isEmpty)
+
+        let leak = Leak<Store.Snapshot>()
+        try await store.withSnapshot { leak.value = $0 }
+        #expect(throws: NotesError.connectionClosed) { try leak.value?.tags(for: [.id("OLD-NOTE")]) }
+        #expect(throws: NotesError.connectionClosed) { try leak.value?.tags() }
+        #expect(throws: NotesError.connectionClosed) { try leak.value?.links(from: [.id("OLD-NOTE")]) }
+        #expect(throws: NotesError.connectionClosed) { try leak.value?.backlinks(to: .id("OLD-NOTE")) }
+        #expect(throws: NotesError.connectionClosed) { try leak.value?.smartFolders() }
     }
 
     @Test("Cursors work without database metadata")
