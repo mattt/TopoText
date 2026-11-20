@@ -299,3 +299,56 @@ extension NotesFolder {
         return blobs
     }
 }
+
+/// A document of the size of a long, much-edited note:
+/// most of its substrings hold deleted text, several replicas wrote it, and a few substrings have two children.
+/// - Parameters:
+///   - units: The length of the text in UTF-16 code units.
+///   - substrings: The number of substrings, of which one in five holds text.
+func largeDocument(units: Int = 200_000, substrings count: Int = 20_000, replicas replicaCount: Int = 6) -> [UInt8] {
+    // The text: paragraphs of 59 letters and a line feed, with a run for every 40 code units. The last paragraph is a checklist item.
+    let paragraph = String(repeating: "abcdefghi ", count: 6).dropLast() + "\n"
+    let text = String(String(repeating: String(paragraph), count: units / 60).prefix(units - 1))
+    let lastStart = (units / 60 - 1) * 60
+    var runs: [StoredRun] = []
+    var rest = text.prefix(lastStart)
+    var index = 0
+    while !rest.isEmpty {
+        let piece = String(rest.prefix(40))
+        rest = rest.dropFirst(40)
+        index += 1
+        runs.append(
+            run(piece) {
+                $0.message(2, paragraphStyle(index % 7 == 0 ? 100 : 0) { $0.int(3, 0) })
+                if index % 3 == 0 { $0.int(5, 1) }
+                $0.int(13, index % 5)
+            }
+        )
+    }
+    runs.append(run(String(text.dropFirst(lastStart))) { $0.message(2, paragraphStyle(103, todo: (Array(repeating: 0x77, count: 16), 0))) })
+
+    let visibleCount = count / 5
+    let visibleLength = units / visibleCount
+    var clocks = Array(repeating: 0, count: replicaCount)
+    var specs = [originSubstring]
+    var remaining = text.utf16.count
+    for position in 0 ..< count {
+        let replica = position % replicaCount
+        let isVisible = position % 5 == 0 && remaining > 0
+        let length = isVisible ? (position / 5 == visibleCount - 1 ? remaining : min(remaining, visibleLength)) : 1 + position % 30
+        if isVisible { remaining -= length }
+        var spec = SubstringSpec(replica: replica + 1, clock: clocks[replica], length: length, style: (replica + 1, position % 50))
+        spec.tombstone = isVisible ? nil : 1
+        // A few substrings have two children, as after concurrent insertions.
+        if position % 4_000 == 7 { spec.children = [position + 2, position + 3] }
+        clocks[replica] += length
+        specs.append(spec)
+    }
+    if remaining > 0 {
+        specs.append(SubstringSpec(replica: 1, clock: clocks[0], length: remaining, style: (1, 0)))
+        clocks[0] += remaining
+    }
+    specs.append(endSubstring)
+    let replicas = clocks.enumerated().map { ReplicaSpec(uuid: replicaUUID(UInt8(0x10 + $0.offset)), clocks: [$0.element, 60]) }
+    return storedDocument(runs, substrings: specs, replicas: replicas)
+}

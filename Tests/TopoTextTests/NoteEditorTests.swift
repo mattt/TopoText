@@ -82,6 +82,10 @@ private func expectConsistent(
     #expect(positions == Array(range.lowerBound ..< range.lowerBound + inserted), sourceLocation: sourceLocation)
 
     #expect(try NoteDocument(data: try after.data()).text == after.text, sourceLocation: sourceLocation)
+
+    // The validation tool's check, which compares whole substrings and runs, finds nothing either.
+    let failures = before.failures(of: after, expecting: .init(replaced: range, inserted: inserted, restyled: styled, replica: replica))
+    #expect(failures == [], sourceLocation: sourceLocation)
 }
 
 @Suite struct NoteEditorParagraphTests {

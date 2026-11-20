@@ -21,7 +21,8 @@ struct WireMessage: Hashable, Sendable {
         let value: Value
         /// The stored bytes that the value does not determine:
         /// the key, then the varint of a varint field or the length of a length-delimited field.
-        /// It is `nil` for a field that was not decoded, which is written in the canonical form.
+        /// It is `nil` for a field whose stored bytes had the canonical form, and for a field that was not decoded:
+        /// both are written in the canonical form, which for the first gives the stored bytes.
         fileprivate let prefix: [UInt8]?
 
         init(_ number: Int, _ value: Value) {
@@ -52,17 +53,73 @@ struct WireMessage: Hashable, Sendable {
     /// - Throws: ``FormatError/malformed`` if the bytes are not a protocol buffer message.
     init(_ bytes: some Collection<UInt8>) throws {
         let bytes = Array(bytes)
-        var index = 0
         var fields: [Field] = []
+        try Self.scan(bytes, in: 0 ..< bytes.count) { number, scanned, field, isCanonical in
+            let value: Value
+            // The end of the key and of the varint or length, which is where the other values start.
+            var prefixEnd = field.upperBound
+            switch scanned {
+            case .varint(let varint):
+                value = .varint(varint)
+            case .fixed64(let fixed):
+                value = .fixed64(fixed)
+                prefixEnd -= 8
+            case .bytes(let range):
+                value = .bytes(Array(bytes[range]))
+                prefixEnd = range.lowerBound
+            case .fixed32(let fixed):
+                value = .fixed32(fixed)
+                prefixEnd -= 4
+            }
+            if isCanonical {
+                fields.append(Field(number, value))
+            } else {
+                fields.append(Field(number: number, value: value, prefix: Array(bytes[field.lowerBound ..< prefixEnd])))
+            }
+        }
+        self.fields = fields
+    }
+
+    /// The value of a field in the bytes of a message, by wire type.
+    enum Scanned {
+        case varint(UInt64)
+        case fixed64(UInt64)
+        /// The range of the bytes of a length-delimited field.
+        case bytes(Range<Int>)
+        case fixed32(UInt32)
+    }
+
+    /// Reads the fields of a message in place, without a copy of any value.
+    ///
+    /// A document holds tens of thousands of small messages, and this reads one of them without an allocation.
+    /// - Parameters:
+    ///   - bytes: The bytes that hold the message.
+    ///   - range: The range of the message in the bytes.
+    ///   - visit: A closure that takes each field in order: its number, its value, the range of its bytes,
+    ///     and whether its key and its varint or length have the canonical form.
+    /// - Throws: ``FormatError/malformed`` if the bytes are not a protocol buffer message.
+    static func scan(
+        _ bytes: [UInt8],
+        in range: Range<Int>,
+        _ visit: (_ number: Int, _ value: Scanned, _ field: Range<Int>, _ isCanonical: Bool) -> Void
+    ) throws {
+        var index = range.lowerBound
+        let end = range.upperBound
+        // Whether each varint of the current field has the shortest form, which is the form that is written.
+        var isCanonical = true
 
         func readVarint() throws -> UInt64 {
             var result: UInt64 = 0
             var shift: UInt64 = 0
-            while index < bytes.count, shift < 64 {
+            let start = index
+            while index < end, shift < 64 {
                 let byte = bytes[index]
                 index += 1
                 result |= UInt64(byte & 0x7F) << shift
                 if byte & 0x80 == 0 {
+                    // A shorter form exists if the last byte adds no bits. The tenth byte has room for one bit only.
+                    let count = index - start
+                    if (byte == 0 && count > 1) || (count == 10 && byte > 1) { isCanonical = false }
                     return result
                 }
                 shift += 7
@@ -71,32 +128,30 @@ struct WireMessage: Hashable, Sendable {
         }
 
         func readFixed(_ count: Int) throws -> UInt64 {
-            guard bytes.count - index >= count else {
+            guard end - index >= count else {
                 throw FormatError.malformed
             }
             defer { index += count }
             return bytes[index ..< index + count].reversed().reduce(0) { $0 << 8 | UInt64($1) }
         }
 
-        while index < bytes.count {
+        while index < end {
             let start = index
+            isCanonical = true
             let key = try readVarint()
             let number = Int(truncatingIfNeeded: key >> 3)
-            let value: Value
-            var prefixEnd = index
+            let value: Scanned
             switch key & 0x7 {
             case 0:
                 value = .varint(try readVarint())
-                prefixEnd = index
             case 1:
                 value = .fixed64(try readFixed(8))
             case 2:
                 let length = try readVarint()
-                prefixEnd = index
-                guard length <= UInt64(bytes.count - index) else {
+                guard length <= UInt64(end - index) else {
                     throw FormatError.malformed
                 }
-                value = .bytes(Array(bytes[index ..< index + Int(length)]))
+                value = .bytes(index ..< index + Int(length))
                 index += Int(length)
             case 5:
                 value = .fixed32(UInt32(truncatingIfNeeded: try readFixed(4)))
@@ -104,9 +159,8 @@ struct WireMessage: Hashable, Sendable {
                 // Groups (wire types 3 and 4) are deprecated and absent from these formats.
                 throw FormatError.malformed
             }
-            fields.append(Field(number: number, value: value, prefix: Array(bytes[start ..< prefixEnd])))
+            visit(number, value, start ..< index, isCanonical)
         }
-        self.fields = fields
     }
 
     /// The bytes of the message.
@@ -138,14 +192,19 @@ struct WireMessage: Hashable, Sendable {
         return output
     }
 
+    /// Appends a varint in the canonical form.
+    static func appendVarint(_ value: UInt64, to output: inout [UInt8]) {
+        var value = value
+        while value >= 0x80 {
+            output.append(UInt8(value & 0x7F) | 0x80)
+            value >>= 7
+        }
+        output.append(UInt8(value))
+    }
+
     private static func write(_ field: Field, prefix: [UInt8]?, to output: inout [UInt8]) {
         func writeVarint(_ value: UInt64) {
-            var value = value
-            while value >= 0x80 {
-                output.append(UInt8(value & 0x7F) | 0x80)
-                value >>= 7
-            }
-            output.append(UInt8(value))
+            appendVarint(value, to: &output)
         }
         func writeFixed(_ value: UInt64, _ count: Int) {
             for index in 0 ..< count {
@@ -277,15 +336,34 @@ extension WireMessage {
     /// The values go where the field's first value was,
     /// or before the first field with a higher number if the message lacks the field.
     mutating func setRepeated(_ number: Int, _ values: [Value]) {
-        guard self.values(number) != values else { return }
+        let indexes = fields.indices.filter { fields[$0].number == number }
+        // Most changes leave most values in place, so match the values at both ends first.
+        var head = 0
+        while head < indexes.count, head < values.count, fields[indexes[head]].value == values[head] {
+            head += 1
+        }
+        guard head < indexes.count || head < values.count else { return }
+        var tail = 0
+        while tail < indexes.count - head, tail < values.count - head, fields[indexes[indexes.count - 1 - tail]].value == values[values.count - 1 - tail] {
+            tail += 1
+        }
+        let old = indexes[head ..< indexes.count - tail].map { fields[$0] }
+        let new = values[head ..< values.count - tail]
+        if old.count == new.count {
+            // The same number of values: each one takes the place of the value that it replaces.
+            for (index, value) in zip(indexes[head ..< indexes.count - tail], new) {
+                fields[index] = Field(number, value)
+            }
+            return
+        }
         var stored: [Value: [Field]] = [:]
-        for field in fields.reversed() where field.number == number {
+        for field in old.reversed() {
             stored[field.value, default: []].append(field)
         }
-        let replacement = values.map { stored[$0]?.popLast() ?? Field(number, $0) }
-        let index = fields.firstIndex { $0.number == number }
+        let replacement =
+            indexes.prefix(head).map { fields[$0] } + new.map { stored[$0]?.popLast() ?? Field(number, $0) } + indexes.suffix(tail).map { fields[$0] }
         fields.removeAll { $0.number == number }
-        fields.insert(contentsOf: replacement, at: index ?? insertionIndex(for: number))
+        fields.insert(contentsOf: replacement, at: indexes.first ?? insertionIndex(for: number))
     }
 
     private func insertionIndex(for number: Int) -> Int {

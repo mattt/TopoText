@@ -35,6 +35,24 @@ struct StoredNote: Hashable, Sendable {
             clock = message?.uint32(2) ?? 0
         }
 
+        /// Reads the identifier from a `CharID` message in the bytes of a substring, in place.
+        ///
+        /// It gives the values that ``init(_:)`` gives for the decoded message, and zeros for bytes that don't decode.
+        fileprivate init(_ bytes: [UInt8], in range: Range<Int>) {
+            var replica = 0
+            var clock = 0
+            do {
+                try WireMessage.scan(bytes, in: range) { number, value, _, _ in
+                    guard case .varint(let value) = value else { return }
+                    if number == 1 { replica = Int(value & 0xFFFF_FFFF) }
+                    if number == 2 { clock = Int(value & 0xFFFF_FFFF) }
+                }
+                self.init(replica: replica, clock: clock)
+            } catch {
+                self.init(replica: 0, clock: 0)
+            }
+        }
+
         init(replica: Int, clock: Int) {
             self.replica = replica
             self.clock = clock
@@ -63,50 +81,110 @@ struct StoredNote: Hashable, Sendable {
         /// The clock value of the substring that ends every document.
         static let endClock = 0xFFFF_FFFF
 
-        private(set) var message: WireMessage
+        /// The bytes of the stored message.
+        ///
+        /// The properties below hold its values, read once in place, and write each change back to the bytes.
+        /// A substring that an edit does not change keeps the bytes that it was decoded from.
+        private(set) var encoded: [UInt8]
+
+        /// Decodes a `Substring` message.
+        /// - Throws: ``FormatError/malformed`` if the bytes are not a protocol buffer message.
+        init(encoded: [UInt8]) throws {
+            self.encoded = encoded
+            // One pass over the fields. Where a field repeats, its last value counts, as in ``WireMessage``.
+            var id = CharacterID(replica: 0, clock: 0)
+            var length = 0
+            var styleTimestamp = CharacterID(replica: 0, clock: 0)
+            var tombstoneValue: UInt64 = 0
+            var children: [Int] = []
+            try WireMessage.scan(encoded, in: 0 ..< encoded.count) { number, value, _, _ in
+                switch (number, value) {
+                case (1, .bytes(let range)): id = CharacterID(encoded, in: range)
+                case (2, .varint(let value)): length = Int(value & 0xFFFF_FFFF)
+                case (3, .bytes(let range)): styleTimestamp = CharacterID(encoded, in: range)
+                case (4, .varint(let value)): tombstoneValue = value
+                case (5, .varint(let index)): children.append(Int(index & 0xFFFF_FFFF))
+                case (5, .bytes(let range)): children += Self.unpack(encoded[range])
+                default: break
+                }
+            }
+            self.id = id
+            self.length = length
+            self.styleTimestamp = styleTimestamp
+            self.tombstoneValue = tombstoneValue
+            storedChildren = children
+        }
 
         init(_ message: WireMessage) {
-            self.message = message
+            // The bytes of a message always decode.
+            self = (try? Self(encoded: message.encoded())) ?? Self(id: .init(replica: 0, clock: 0), length: 0, styleTimestamp: .init(replica: 0, clock: 0))
         }
 
         /// Creates a substring for newly inserted characters.
         init(id: CharacterID, length: Int, styleTimestamp: CharacterID) {
-            message = WireMessage([
+            encoded = WireMessage([
                 .init(1, .bytes(id.message.encoded())),
                 .init(2, .varint(UInt64(length))),
                 .init(3, .bytes(styleTimestamp.message.encoded())),
-            ])
+            ]).encoded()
+            self.id = id
+            self.length = length
+            self.styleTimestamp = styleTimestamp
+            tombstoneValue = 0
+            storedChildren = []
+        }
+
+        /// The stored message, with every field that Notes wrote.
+        var message: WireMessage {
+            (try? WireMessage(encoded)) ?? WireMessage()
+        }
+
+        /// Writes a changed message back to the bytes.
+        private mutating func store(_ message: WireMessage) {
+            encoded = message.encoded()
         }
 
         /// The identifier of the first character. Each following character has the next clock value.
         var id: CharacterID {
-            get { CharacterID(message.message(1)) }
-            set { newValue.write(to: &message, field: 1) }
+            didSet {
+                guard id != oldValue else { return }
+                var message = message
+                id.write(to: &message, field: 1)
+                store(message)
+            }
         }
 
         /// The number of UTF-16 code units.
         var length: Int {
-            get { message.uint32(2) ?? 0 }
-            set { message.setVarint(2, UInt64(newValue)) }
+            didSet {
+                guard length != oldValue else { return }
+                var message = message
+                message.setVarint(2, UInt64(length))
+                store(message)
+            }
         }
 
         /// The replica that last set the style of the characters, or deleted them, and its style clock at the time.
         var styleTimestamp: CharacterID {
-            get { CharacterID(message.message(3)) }
-            set { newValue.write(to: &message, field: 3) }
+            didSet {
+                guard styleTimestamp != oldValue else { return }
+                var message = message
+                styleTimestamp.write(to: &message, field: 3)
+                store(message)
+            }
         }
 
         /// The stored tombstone value: 1 for deleted characters, and absent, read as 0, for the others.
-        var tombstoneValue: UInt64 {
-            message.varint(4) ?? 0
-        }
+        private(set) var tombstoneValue: UInt64
 
         var isTombstone: Bool {
             get { tombstoneValue != 0 }
             set {
-                if newValue != isTombstone {
-                    message.set(4, newValue ? .varint(1) : nil)
-                }
+                guard newValue != isTombstone else { return }
+                var message = message
+                message.set(4, newValue ? .varint(1) : nil)
+                store(message)
+                tombstoneValue = newValue ? 1 : 0
             }
         }
 
@@ -114,17 +192,11 @@ struct StoredNote: Hashable, Sendable {
         ///
         /// Notes writes one field for each index. A packed field is read too, and written back packed.
         var children: [Int] {
-            get {
-                message.values(5).flatMap { value -> [Int] in
-                    switch value {
-                    case .varint(let index): return [Int(index & 0xFFFF_FFFF)]
-                    case .bytes(let packed): return Self.unpack(packed)
-                    default: return []
-                    }
-                }
-            }
+            get { storedChildren }
             set {
-                guard newValue != children else { return }
+                guard newValue != storedChildren else { return }
+                storedChildren = newValue
+                var message = message
                 let isPacked = message.values(5).contains { if case .bytes = $0 { true } else { false } }
                 if isPacked {
                     let packed = WireMessage(newValue.map { .init(0, .varint(UInt64($0))) }).encoded()
@@ -133,6 +205,40 @@ struct StoredNote: Hashable, Sendable {
                 } else {
                     message.setRepeated(5, newValue.map { .varint(UInt64($0)) })
                 }
+                store(message)
+            }
+        }
+
+        private var storedChildren: [Int]
+
+        /// Adds 1 to each child index at or past a position, ahead of an insertion into the substring list there.
+        ///
+        /// An insertion near the start of a document changes the children of nearly every substring,
+        /// so this writes the changed indexes straight to the bytes. The result is what setting ``children`` gives.
+        mutating func shiftChildren(from threshold: Int) {
+            guard storedChildren.contains(where: { $0 >= threshold }) else { return }
+            let shifted = storedChildren.map { $0 >= threshold ? $0 + 1 : $0 }
+            var output: [UInt8] = []
+            output.reserveCapacity(encoded.count + shifted.count)
+            var isPacked = false
+            let bytes = encoded
+            try? WireMessage.scan(bytes, in: 0 ..< bytes.count) { number, value, field, _ in
+                switch (number, value) {
+                case (5, .varint(let index)) where Int(index & 0xFFFF_FFFF) >= threshold:
+                    // The key of field 5 with a varint, then the new index.
+                    output.append(5 << 3)
+                    WireMessage.appendVarint((index & 0xFFFF_FFFF) + 1, to: &output)
+                case (5, .bytes):
+                    isPacked = true
+                default:
+                    output += bytes[field]
+                }
+            }
+            if isPacked {
+                children = shifted
+            } else {
+                storedChildren = shifted
+                encoded = output
             }
         }
 
@@ -146,7 +252,7 @@ struct StoredNote: Hashable, Sendable {
             !isTombstone && !isEnd && length > 0
         }
 
-        private static func unpack(_ packed: [UInt8]) -> [Int] {
+        private static func unpack(_ packed: ArraySlice<UInt8>) -> [Int] {
             var values: [Int] = []
             var current: UInt64 = 0
             var shift: UInt64 = 0
@@ -250,24 +356,28 @@ struct StoredNote: Hashable, Sendable {
     ///
     /// The run keeps every field, including those that TopoText does not read.
     struct AttributeRun: Hashable, Sendable {
-        var message: WireMessage
+        /// The stored message. ``length`` holds its length, read once, and writes each change back to it.
+        private(set) var message: WireMessage
 
         init(_ message: WireMessage) {
             self.message = message
+            length = message.int32(1) ?? 0
         }
 
         /// Creates a run with a length and, optionally, a paragraph style.
         init(length: Int, paragraphStyle: WireMessage? = nil) {
-            message = WireMessage([.init(1, .varint(UInt64(length)))])
+            var message = WireMessage([.init(1, .varint(UInt64(length)))])
             if let paragraphStyle {
                 message.setMessage(2, paragraphStyle)
             }
+            self.init(message)
         }
 
         /// The number of UTF-16 code units, or a negative number if the stored length is negative.
         var length: Int {
-            get { message.int32(1) ?? 0 }
-            set { message.setVarint(1, UInt64(newValue)) }
+            didSet {
+                if length != oldValue { message.setVarint(1, UInt64(length)) }
+            }
         }
 
         var paragraphStyle: WireMessage? {
@@ -369,7 +479,10 @@ struct StoredNote: Hashable, Sendable {
                 return try WireMessage(bytes)
             }
         }
-        substrings = try messages(string, 3).map(Substring.init)
+        substrings = try string.values(3).map { value in
+            guard case .bytes(let bytes) = value else { throw FormatError.malformed }
+            return try Substring(encoded: bytes)
+        }
         runs = try messages(string, 5).map(AttributeRun.init)
         if let bytes = string.bytes(4) {
             let timestamp = try WireMessage(bytes)
@@ -386,7 +499,7 @@ struct StoredNote: Hashable, Sendable {
         if text != storedText {
             string.set(2, .bytes(Array(text.utf8)))
         }
-        string.setRepeated(3, substrings.map { .bytes($0.message.encoded()) })
+        string.setRepeated(3, substrings.map { .bytes($0.encoded) })
         if vectorTimestamp != nil || !replicas.isEmpty {
             var timestamp = vectorTimestamp ?? WireMessage()
             timestamp.setRepeated(1, replicas.map { .bytes($0.message.encoded()) })
@@ -518,19 +631,37 @@ extension StoredNote {
 
         let limit = 1 << 31
         require(.clockRange, replicas.allSatisfy { $0.clocks.allSatisfy { $0 < limit } })
-        for (index, substring) in substrings.enumerated() {
+        let textClocks = replicas.map(\.textClock)
+        // This loop runs for every substring of every document that is edited, so it keeps plain flags.
+        var replicaIndexes = true
+        var tombstoneValues = true
+        var clockRange = true
+        var textClockValues = true
+        var childIndexes = true
+        let replicaCount = replicas.count
+        let count = substrings.count
+        for index in 0 ..< count {
+            let substring = substrings[index]
             let id = substring.id
             let timestamp = substring.styleTimestamp
-            require(.replicaIndexes, id.replica <= replicas.count && timestamp.replica <= replicas.count)
-            require(.tombstoneValues, substring.tombstoneValue <= 1)
-            guard !substring.isEnd else { continue }
-            require(.clockRange, id.clock + substring.length < limit && timestamp.clock < limit)
-            if id.replica >= 1, id.replica <= replicas.count {
-                require(.textClocks, id.clock + substring.length <= replicas[id.replica - 1].textClock)
+            if id.replica > replicaCount || timestamp.replica > replicaCount { replicaIndexes = false }
+            if substring.tombstoneValue > 1 { tombstoneValues = false }
+            if id.clock == Substring.endClock { continue }
+            if id.clock + substring.length >= limit || timestamp.clock >= limit { clockRange = false }
+            if id.replica >= 1, id.replica <= replicaCount, id.clock + substring.length > textClocks[id.replica - 1] {
+                textClockValues = false
             }
             let children = substring.children
-            require(.childIndexes, !children.isEmpty && children.allSatisfy { $0 > index && $0 < substrings.count })
+            if children.isEmpty { childIndexes = false }
+            for child in children where child <= index || child >= count {
+                childIndexes = false
+            }
         }
+        require(.replicaIndexes, replicaIndexes)
+        require(.tombstoneValues, tombstoneValues)
+        require(.clockRange, clockRange)
+        require(.textClocks, textClockValues)
+        require(.childIndexes, childIndexes)
         return Invariant.allCases.filter(broken.contains)
     }
 }

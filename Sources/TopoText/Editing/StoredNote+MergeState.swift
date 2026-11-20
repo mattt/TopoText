@@ -45,12 +45,13 @@ extension StoredNote {
             index = replicas.count
         }
 
+        let uuids = replicas.map(\.uuid)
         var highest: (clock: Int, uuid: [UInt8])?
         for substring in substrings {
             let timestamp = substring.styleTimestamp
             // Replica 0 stands for the origin and the end marker, which carry no style.
             guard timestamp.replica >= 1, timestamp.replica <= replicas.count else { continue }
-            let holder = replicas[timestamp.replica - 1].uuid
+            let holder = uuids[timestamp.replica - 1]
             if let current = highest {
                 if timestamp.clock < current.clock { continue }
                 if timestamp.clock == current.clock, !current.uuid.lexicographicallyPrecedes(holder) { continue }
@@ -183,10 +184,7 @@ extension StoredNote {
     /// Adds 1 to each child index at or past a position, ahead of an insertion into the list there.
     private mutating func shiftChildren(from threshold: Int) {
         for index in substrings.indices {
-            let children = substrings[index].children
-            if children.contains(where: { $0 >= threshold }) {
-                substrings[index].children = children.map { $0 >= threshold ? $0 + 1 : $0 }
-            }
+            substrings[index].shiftChildren(from: threshold)
         }
     }
 
