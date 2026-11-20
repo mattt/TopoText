@@ -146,7 +146,9 @@ extension NotesFolder {
                     (57, 9, 'LINK-3', 'com.apple.notes.inlinetextattachment.link', 'From the vault',
                         'applenotes:note/0e5a3c7d-1111-4b4b-8c8c-000000000001', 22, 0),
                     (58, 9, 'LINK-4', 'com.apple.notes.inlinetextattachment.link', 'Not a note link', 'https://example.com', 25, 0),
-                    (59, 9, 'LINK-5', 'com.apple.notes.inlinetextattachment.link', 'Self', 'applenotes:note/0E5A3C7D-1111-4B4B-8C8C-000000000001', 20, 1);
+                    (59, 9, 'LINK-5', 'com.apple.notes.inlinetextattachment.link', 'Self', 'applenotes:note/0E5A3C7D-1111-4B4B-8C8C-000000000001', 20, 1),
+                    (62, 9, 'HASHTAG-9', 'com.apple.notes.inlinetextattachment.hashtag', '#CAFE', NULL, 25, 0),
+                    (63, 9, 'HASHTAG-10', 'com.apple.notes.inlinetextattachment.hashtag', '#cafe', NULL, 25, 0);
                 INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTITLE2, ZOWNER, ZFOLDERTYPE, ZSMARTFOLDERQUERYJSON, ZPARENT) VALUES
                     (60, 15, 'FOLDER-SMART-2', 'Pinned', 1, 0, '{"entity":"note","type":{"and":[{"deleted":false},{"pinned":true}]}}', 4);
                 INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTITLE2, ZOWNER, ZFOLDERTYPE, ZSMARTFOLDERQUERYJSON, ZMARKEDFORDELETION) VALUES

@@ -34,7 +34,7 @@ import Testing
         let tags = try await store.tags(for: [.id("NOTE-GROCERIES"), .id("NOTE-PIE"), .id("NOTE-CAFE"), .id("NOTE-TABLES")])
         #expect(tags[.id("NOTE-GROCERIES")]?.map(\.text) == ["#groceries"])
         #expect(tags[.id("NOTE-PIE")]?.map(\.text) == ["#Groceries"])
-        // A tag with no name is skipped.
+        // A tag with no name is skipped, and spellings that differ in case or accents are one tag.
         #expect(tags[.id("NOTE-CAFE")]?.map(\.text) == ["#Café"])
         #expect(tags[.id("NOTE-TABLES")]?.map(\.text) == ["#pantry"])
     }
@@ -50,6 +50,7 @@ import Testing
     func tagSummaries() async throws {
         let summaries = try await store.tags()
         #expect(summaries.map(\.tag.text) == ["#groceries", "#Café", "#pantry"])
+        // The note that spells the tag three ways counts once.
         #expect(summaries.map(\.noteCount) == [2, 1, 1])
     }
 
