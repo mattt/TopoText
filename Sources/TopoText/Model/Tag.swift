@@ -74,7 +74,7 @@ public struct TagSummary: Sendable, Hashable {
     /// - Parameters:
     ///   - tag: The tag.
     ///   - noteCount: The number of notes that have the tag.
-    init(tag: Note.Tag, noteCount: Int) {
+    public init(tag: Note.Tag, noteCount: Int) {
         self.tag = tag
         self.noteCount = noteCount
     }
