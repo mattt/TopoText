@@ -4,19 +4,24 @@ import TopoText
 
 // Reads a real Notes database with TopoText and prints aggregate counts,
 // so that the decoders can be checked against real data without revealing it.
-// The output never contains titles, text, identifiers, file names, or type identifiers.
+// The output never contains titles, text, identifiers, file names, type identifiers, or tag names.
+// For note links it prints the form of the stored token, with each identifier replaced by its length and kind.
 //
-// Usage: swift run Validate [<path to group.com.apple.notes>] [--applescript]
+// Usage: swift run Validate [<path to group.com.apple.notes>] [--applescript] [--smart-folders]
 //
 // The process that runs this tool needs read access to the Notes folder,
 // for example through Full Disk Access for the terminal.
 // With --applescript, the tool also asks Notes for its count of notes,
 // which needs permission to control Notes.
+// With --smart-folders, the tool also prints each smart folder's name and its stored query, unchanged.
+// This is the only option that prints stored text; use it only when that output can be shown.
 
 /// Counts of what the tool found, keyed by a label that describes the count.
 struct Tally: Sendable {
     private(set) var counts: [String: Int] = [:]
     private(set) var decodingTime: Duration = .zero
+    /// The tags and note links found in the note that ``examine(_:in:)`` is reading.
+    private var found = DecodedInline()
 
     mutating func add(_ label: String, _ amount: Int = 1) {
         counts[label, default: 0] += amount
@@ -32,7 +37,9 @@ struct Tally: Sendable {
     }
 
     /// Reads a note's contents and counts what they hold.
-    mutating func examine(_ note: Note, in snapshot: Store.Snapshot) throws {
+    /// - Returns: The tags and note links in the contents, or `nil` if the note is locked or its contents don't decode.
+    mutating func examine(_ note: Note, in snapshot: Store.Snapshot) throws -> DecodedInline? {
+        found = DecodedInline()
         add("notes")
         if note.isRecentlyDeleted { add("notes in Recently Deleted") }
         if note.isPinned { add("pinned notes") }
@@ -42,7 +49,7 @@ struct Tally: Sendable {
         if note.snippet == nil { add("notes without a preview") }
         guard !note.isLocked else {
             add("locked notes")
-            return
+            return nil
         }
 
         let start = ContinuousClock.now
@@ -51,7 +58,7 @@ struct Tally: Sendable {
             content = try snapshot.content(for: note.id)
         } catch let error as NotesError {
             add("contents: \(Self.name(of: error))")
-            return
+            return nil
         }
         decodingTime += ContinuousClock.now - start
         add("contents: decoded")
@@ -72,6 +79,7 @@ struct Tally: Sendable {
         if content.paragraphs.isEmpty { add("decoded notes without paragraphs") }
 
         try examine(content, in: snapshot, depth: 0)
+        return found
     }
 
     private mutating func examine(_ content: Note.Content, in snapshot: Store.Snapshot, depth: Int) throws {
@@ -90,6 +98,7 @@ struct Tally: Sendable {
                 if run.color != nil { add("runs\(place): colored") }
                 if run.link != nil {
                     add(run.linkedNoteID == nil ? "runs\(place): links" : "runs\(place): links to notes")
+                    if run.linkedNoteID != nil { found.runLinksToNotes += 1 }
                 }
                 if run.text.contains("\u{FFFC}"), run.attachment == nil {
                     add("runs\(place): replacement characters without an attachment")
@@ -119,7 +128,24 @@ struct Tally: Sendable {
         switch attachment.kind {
         case .hashtag, .mention, .noteLink, .calculation, .inlineText:
             if attachment.displayText == nil { add("inline attachments\(place): without text") }
-            if attachment.kind == .noteLink, attachment.linkedNoteID == nil { add("inline links\(place): without a note identifier") }
+            if attachment.kind == .noteLink {
+                if attachment.linkedNoteID == nil { add("inline links\(place): without a note identifier") }
+                add("inline links\(place): token of the form \(maskedShape(attachment.tokenIdentifier))")
+            }
+            if attachment.kind == .hashtag {
+                if let tag = attachment.displayText.flatMap(Note.Tag.init(_:)) {
+                    found.tags.insert(tagKey(tag))
+                } else {
+                    found.tagsWithoutText += 1
+                }
+            }
+            if attachment.kind == .noteLink {
+                if let target = attachment.linkedNoteID {
+                    found.linkTargets.insert(target)
+                } else {
+                    found.linksWithoutTarget += 1
+                }
+            }
         case .table:
             if let table = attachment.table {
                 add("tables\(place): decoded")
@@ -231,18 +257,23 @@ print("folders without an account: \(folders.filter { $0.account == nil }.count)
 print("notes counted by folders: \(folders.map(\.noteCount).reduce(0, +))")
 
 var tally = Tally()
+var inline = InlineChecks()
 var cursor: Note.FetchRequest.Cursor?
 repeat {
     let request = Note.FetchRequest(includesRecentlyDeleted: true, limit: Note.FetchRequest.maximumLimit, cursor: cursor)
-    let (page, next) = try await store.withSnapshot { snapshot in
+    let (page, inlinePage, next) = try await store.withSnapshot { snapshot in
         let result = try snapshot.search(request)
         var tally = Tally()
+        var decoded: [Note.ID: DecodedInline] = [:]
         for note in result.notes {
-            try tally.examine(note, in: snapshot)
+            decoded[note.id] = try tally.examine(note, in: snapshot)
         }
-        return (tally, result.nextCursor)
+        var inline = InlineChecks()
+        try inline.compare(result.notes, decoded: decoded, in: snapshot)
+        return (tally, inline, result.nextCursor)
     }
     tally.merge(page)
+    inline.merge(inlinePage)
     cursor = next
 } while cursor != nil
 
@@ -253,6 +284,27 @@ let decoded = tally["contents: decoded"]
 if decoded > 0 {
     let milliseconds = Double(tally.decodingTime.components.seconds) * 1000 + Double(tally.decodingTime.components.attoseconds) / 1e15
     print(String(format: "average time to read contents: %.2f ms", milliseconds / Double(decoded)))
+}
+
+print("")
+print("Tags, links, and smart folders:")
+let finalInline = inline
+let (inlineLines, smartFolders, tagKeys) = try await store.withSnapshot { snapshot in
+    var inline = finalInline
+    try inline.checkInventoryAndBacklinks(in: snapshot)
+    let tagKeys = Set(try snapshot.tags(includingRecentlyDeleted: true).map { tagKey($0.tag) })
+    return (inline.lines, try snapshot.smartFolders(), tagKeys)
+}
+for line in inlineLines + smartFolderLines(smartFolders, tagKeys: tagKeys) {
+    print(line)
+}
+
+if arguments.contains("--smart-folders") {
+    print("")
+    print("Smart folders and their stored queries (--smart-folders):")
+    for folder in smartFolders {
+        print("\(folder.name): \(folder.query)")
+    }
 }
 
 #if DEBUG

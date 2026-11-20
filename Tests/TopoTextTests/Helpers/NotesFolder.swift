@@ -134,6 +134,25 @@ extension NotesFolder {
                         'applenotes:note/0e5a3c7d-1111-4b4b-8c8c-000000000001?ownerIdentifier=_abc', 20);
                 INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTYPEUTI1, ZALTTEXT, ZNOTE1) VALUES
                     (36, 9, 'HASHTAG-2', 'com.apple.notes.inlinetextattachment.hashtag', '#pantry', 28);
+                INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTYPEUTI1, ZALTTEXT, ZTOKENCONTENTIDENTIFIER, ZNOTE1, ZMARKEDFORDELETION) VALUES
+                    (50, 9, 'HASHTAG-3', 'com.apple.notes.inlinetextattachment.hashtag', '#Groceries', NULL, 21, 0),
+                    (51, 9, 'HASHTAG-4', 'com.apple.notes.inlinetextattachment.hashtag', '#secret', NULL, 22, 0),
+                    (52, 9, 'HASHTAG-5', 'com.apple.notes.inlinetextattachment.hashtag', '#old', NULL, 23, 0),
+                    (53, 9, 'HASHTAG-6', 'com.apple.notes.inlinetextattachment.hashtag', '#removed', NULL, 20, 1),
+                    (54, 9, 'HASHTAG-7', 'com.apple.notes.inlinetextattachment.hashtag', '#Café', NULL, 25, 0),
+                    (55, 9, 'HASHTAG-8', 'com.apple.notes.inlinetextattachment.hashtag', '#', NULL, 25, 0),
+                    (56, 9, 'LINK-2', 'com.apple.notes.inlinetextattachment.link', 'Apple pie to other',
+                        'applenotes:note/0E5A3C7D-1111-4B4B-8C8C-000000000001', 21, 0),
+                    (57, 9, 'LINK-3', 'com.apple.notes.inlinetextattachment.link', 'From the vault',
+                        'applenotes:note/0e5a3c7d-1111-4b4b-8c8c-000000000001', 22, 0),
+                    (58, 9, 'LINK-4', 'com.apple.notes.inlinetextattachment.link', 'Not a note link', 'https://example.com', 25, 0),
+                    (59, 9, 'LINK-5', 'com.apple.notes.inlinetextattachment.link', 'Self', 'applenotes:note/0E5A3C7D-1111-4B4B-8C8C-000000000001', 20, 1),
+                    (62, 9, 'HASHTAG-9', 'com.apple.notes.inlinetextattachment.hashtag', '#CAFE', NULL, 25, 0),
+                    (63, 9, 'HASHTAG-10', 'com.apple.notes.inlinetextattachment.hashtag', '#cafe', NULL, 25, 0);
+                INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTITLE2, ZOWNER, ZFOLDERTYPE, ZSMARTFOLDERQUERYJSON, ZPARENT) VALUES
+                    (60, 15, 'FOLDER-SMART-2', 'Pinned', 1, 0, '{"entity":"note","type":{"and":[{"deleted":false},{"pinned":true}]}}', 4);
+                INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTITLE2, ZOWNER, ZFOLDERTYPE, ZSMARTFOLDERQUERYJSON, ZMARKEDFORDELETION) VALUES
+                    (61, 15, 'FOLDER-SMART-GONE', 'Deleted smart', 1, 0, '{"tags":["x"]}', 1);
                 INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTYPEUTI, ZSUMMARY, ZMERGEABLEDATA1, ZNOTE) VALUES
                     (37, 5, 'TABLE-BROKEN', 'com.apple.notes.table', 'Broken summary', X'1F8B0800000000000003FFFF', 28);
                 INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTYPEUTI, ZMEDIA, ZNOTE, ZHANDWRITINGSUMMARY, ZFALLBACKIMAGEGENERATION) VALUES

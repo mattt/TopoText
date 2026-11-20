@@ -89,7 +89,7 @@ A note row is listed only when all of these are true:
 
 Columns:
 
-- `ZIDENTIFIER`: the note's UUID, the same on every device and in `applenotes:note/<identifier>` links.
+- `ZIDENTIFIER`: the note's UUID, the same on every device and in `applenotes:` links to the note.
 - `ZTITLE1`: the title.
 - `ZSNIPPET`, then `ZWIDGETSNIPPET` (iOS 17 and later): the preview.
   cupertino found `ZWIDGETSNIPPET` on more notes than `ZSNIPPET`.
@@ -178,9 +178,36 @@ Inline attachments (`ICInlineAttachment`) have types that start with
 
 - `.hashtag`: `ZALTTEXT` is the tag, such as `#groceries`.
 - `.mention`: `ZALTTEXT` is the text, and `ZTOKENCONTENTIDENTIFIER` identifies the participant.
-- `.link`: `ZALTTEXT` is the label, and `ZTOKENCONTENTIDENTIFIER` is an `applenotes:note/…` link.
+- `.link`: `ZALTTEXT` is the label, and `ZTOKENCONTENTIDENTIFIER` is an `applenotes:` link.
+  On macOS 27.0.1 the link is `applenotes://showNote?identifier=<identifier>`, with the identifier in uppercase.
+  Other sources describe `applenotes:note/<identifier>`; TopoText reads both forms.
   The link can carry the note's identifier in lowercase, and OBS uppercases it to find the note.
 - `.calculateresult` and `.calculategraphexpression`: `ZALTTEXT` is the text.
+
+Without decoding any contents, `Store.tags(for:)`, `Store.tags()`, `Store.links(from:)`,
+and `Store.backlinks(to:)` read these rows (`ICInlineAttachment`, found by the entity name),
+joined to their note through `COALESCE(ZNOTE1, ZNOTE)`.
+They skip rows with `ZMARKEDFORDELETION`, and rows of locked notes and of Recently Deleted.
+Without `ZISPASSWORDPROTECTED`, a locked note can't be told apart,
+so these reads throw `unsupportedSchema` rather than read every note as unlocked.
+`Store.backlinks(to:)` selects the rows whose `ZTOKENCONTENTIDENTIFIER` contains
+the identifier, ignoring ASCII case, and then parses each link.
+
+The results follow the rows, not the text.
+The row of an attachment that was deleted from the text may remain until Notes removes it.
+On macOS 27.0.1, a check soon after a tag was deleted from a note found no such row in the results,
+and the row of a deleted link remained with `ZMARKEDFORDELETION` set, which these reads skip.
+Other edits have not been checked.
+If a row remains, a note can have a tag or a link that its text no longer shows,
+and a tag's note count can be higher than the number of notes whose text shows the tag.
+Links cover inline note links only:
+a link to a note that is stored on a text run, as `applenotes:note/…` in `link`,
+has no inline attachment row, so these reads don't return it.
+`content(for:)` reads the text itself, so it shows only the tags and links that the text holds,
+but an attachment that has no row keeps only its identifier and type,
+and the tags and links in a table that can't be decoded are not shown.
+Tags that differ only in case or diacritics are one tag.
+The type is the one in `ZTYPEUTI1` (OBS, sweetrb).
 
 Other attachments (`ICAttachment`):
 
@@ -302,5 +329,19 @@ A run on macOS 27 found the following:
 - **Locked notes.** Their contents are encrypted with the note's password,
   or with the device passcode from iOS 16, which can't be decrypted (ACNP).
 - **Shared notes.** `ZSERVERSHAREDATA` on the note or a parent folder marks a shared note (sweetrb).
-- **Smart folder queries** in `ZSMARTFOLDERQUERYJSON`.
 - **AppleScript identifiers**, `x-coredata://<Z_METADATA.Z_UUID>/ICNote/p<Z_PK>` (ALF; BTT).
+
+## Smart folders
+
+A smart folder is an `ICFolder` row with a query in `ZSMARTFOLDERQUERYJSON`
+(the `ZFOLDERTYPE` of smart folders differs between sources, so TopoText goes by the query).
+`Store.smartFolders()` returns the folder's name, parent, account, and the query text as stored,
+for every folder whose query is not NULL or empty, even if the query is not valid JSON.
+One project reports a query of the form `{"entity":"note","type":{"and":[{"deleted":false}, …]}}`
+(sweetrb).
+On macOS 27.0.1, a smart folder with one tag rule had the query
+`{"type":{"and":[{"deleted":false},{"and":[{"and":[{"deleted":false},{"and":[{"tag":"SMART"}]}]}]}]},"entity":"note"}`:
+the rule sits in nested `and` clauses after the first `deleted` clause,
+and the tag is in capitals, without its `#`.
+Other kinds of rules have not been checked against a real database.
+TopoText doesn't interpret the query or evaluate it against notes.

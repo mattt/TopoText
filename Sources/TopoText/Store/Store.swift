@@ -88,6 +88,41 @@ public actor Store {
             try database.folders()
         }
 
+        /// Returns the smart folders in the database.
+        /// - Returns: The smart folders, ordered by account name and then by name.
+        /// - Throws: A ``NotesError`` if the database can't be read, or `CancellationError`.
+        public func smartFolders() throws -> [SmartFolder] {
+            try database.smartFolders()
+        }
+
+        /// Returns the tags of notes, without decoding their contents.
+        ///
+        /// See ``Store/tags(for:)``.
+        public func tags(for identifiers: [Note.ID]) throws -> [Note.ID: [Note.Tag]] {
+            try database.tags(for: identifiers)
+        }
+
+        /// Returns every tag with the number of notes that have it.
+        ///
+        /// See ``Store/tags(includingRecentlyDeleted:)``.
+        public func tags(includingRecentlyDeleted: Bool = false) throws -> [TagSummary] {
+            try database.tagSummaries(includingRecentlyDeleted: includingRecentlyDeleted)
+        }
+
+        /// Returns the links from notes to other notes, without decoding their contents.
+        ///
+        /// See ``Store/links(from:)``.
+        public func links(from identifiers: [Note.ID]) throws -> [Note.ID: [Note.Link]] {
+            try database.links(from: identifiers)
+        }
+
+        /// Returns the links to a note from other notes.
+        ///
+        /// See ``Store/backlinks(to:)``.
+        public func backlinks(to identifier: Note.ID) throws -> [Note.Link] {
+            try database.backlinks(to: identifier)
+        }
+
         /// Returns the notes that match a request.
         /// - Parameter request: The filters and pagination.
         /// - Returns: The matching notes, the cursor of the next page, and the request.
@@ -190,6 +225,80 @@ public actor Store {
     /// - Throws: A ``NotesError`` if the database can't be read, or `CancellationError`.
     public func folders() throws -> [Folder] {
         try withSnapshot { try $0.folders() }
+    }
+
+    /// Returns the smart folders in the database.
+    ///
+    /// A smart folder collects notes by a query and holds none of its own,
+    /// so ``folders()`` leaves it out.
+    /// A folder counts as smart if its stored query is not empty.
+    /// The query is returned as stored, even if it is not valid JSON.
+    /// - Returns: The smart folders, ordered by account name and then by name.
+    /// - Throws: A ``NotesError`` if the database can't be read, or `CancellationError`.
+    public func smartFolders() throws -> [SmartFolder] {
+        try withSnapshot { try $0.smartFolders() }
+    }
+
+    /// Returns the tags of notes, without decoding their contents.
+    ///
+    /// A tag counts for a note if the database has a row of a tag attachment for the note
+    /// that Notes hasn't marked for deletion.
+    /// The tags come from the database's rows of tag attachments, not from the note's text.
+    /// TopoText doesn't check the rows against the text:
+    /// if a row remains after its tag leaves the text, the note still has the tag here.
+    /// To read the tags that the text shows, decode the note with ``content(for:)``.
+    /// Notes that are locked, in Recently Deleted, or unknown to Notes have no entry;
+    /// a note without tags has none either.
+    /// - Parameter identifiers: The notes to read.
+    /// - Returns: The tags of each note that has any, in the order the database lists them,
+    ///   with each tag once per note, ignoring case and diacritics.
+    /// - Throws: A ``NotesError`` if the database can't be read, or `CancellationError`.
+    public func tags(for identifiers: [Note.ID]) throws -> [Note.ID: [Note.Tag]] {
+        try withSnapshot { try $0.tags(for: identifiers) }
+    }
+
+    /// Returns every tag with the number of notes that have it.
+    ///
+    /// The count covers the notes that Notes lists, except locked notes,
+    /// and except notes in Recently Deleted unless you include them.
+    /// Tags that differ only in case or diacritics count as one.
+    /// The counts come from the database's rows of tag attachments, as in ``tags(for:)``,
+    /// so a count can be higher than the number of notes whose text shows the tag.
+    /// - Parameter includingRecentlyDeleted: Whether notes in Recently Deleted count.
+    /// - Returns: The tags, most used first and then by name.
+    /// - Throws: A ``NotesError`` if the database can't be read, or `CancellationError`.
+    public func tags(includingRecentlyDeleted: Bool = false) throws -> [TagSummary] {
+        try withSnapshot { try $0.tags(includingRecentlyDeleted: includingRecentlyDeleted) }
+    }
+
+    /// Returns the links from notes to other notes, without decoding their contents.
+    ///
+    /// The links come from the database's rows of inline note links, not from the note's text.
+    /// TopoText doesn't check the rows against the text:
+    /// if a row remains after its link leaves the text, the result still includes the link.
+    /// A link to a note that is stored on a text run, as ``Note/TextRun/link``, has no such row
+    /// and is not included; to find it, decode the note with ``content(for:)``
+    /// and read ``Note/TextRun/linkedNoteID``.
+    /// Locked notes and notes in Recently Deleted have no entry.
+    /// - Parameter identifiers: The notes that hold the links.
+    /// - Returns: The links of each note that has any, in the order the database lists them.
+    /// - Throws: A ``NotesError`` if the database can't be read, or `CancellationError`.
+    public func links(from identifiers: [Note.ID]) throws -> [Note.ID: [Note.Link]] {
+        try withSnapshot { try $0.links(from: identifiers) }
+    }
+
+    /// Returns the links to a note from other notes that Notes lists.
+    ///
+    /// The links are the ones that ``links(from:)`` reads, with the same limits:
+    /// a row that remains after its link leaves the text still counts,
+    /// and a link stored on a text run is not included.
+    /// Locked notes and notes in Recently Deleted are not searched,
+    /// and a link from a note to itself is left out.
+    /// - Parameter identifier: The identifier of the target note. The note need not exist.
+    /// - Returns: The links, newest source note first.
+    /// - Throws: A ``NotesError`` if the database can't be read, or `CancellationError`.
+    public func backlinks(to identifier: Note.ID) throws -> [Note.Link] {
+        try withSnapshot { try $0.backlinks(to: identifier) }
     }
 
     /// Returns the notes that match a request, from one snapshot.

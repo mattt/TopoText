@@ -195,6 +195,14 @@ final class Database {
         return results
     }
 
+    /// Throws if the connection is closed.
+    ///
+    /// Statements check this themselves; call it before a read returns without running one.
+    /// - Throws: ``NotesError/connectionClosed``.
+    func checkOpen() throws {
+        guard connection != nil else { throw NotesError.connectionClosed }
+    }
+
     /// Throws if the task is canceled or the time limit has passed.
     ///
     /// Statements check this themselves; call it between steps of work outside SQLite,

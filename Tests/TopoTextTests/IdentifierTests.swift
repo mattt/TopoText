@@ -22,6 +22,8 @@ import Testing
             ("applenotes:note/0E5A3C7D-1111-4B4B-8C8C-000000000001", "0E5A3C7D-1111-4B4B-8C8C-000000000001"),
             ("applenotes://note/ABC-123", "ABC-123"),
             ("APPLENOTES:note/abc", "ABC"),
+            ("applenotes://showNote?identifier=0E5A3C7D-1111-4B4B-8C8C-000000000001", "0E5A3C7D-1111-4B4B-8C8C-000000000001"),
+            ("applenotes://shownote?Identifier=0e5a3c7d-1111-4b4b-8c8c-000000000001&x=1", "0E5A3C7D-1111-4B4B-8C8C-000000000001"),
         ]
     )
     func noteLink(link: String, identifier: String) {
@@ -30,7 +32,11 @@ import Testing
 
     @Test(
         "Other links give no identifier",
-        arguments: ["https://example.com/note/ABC", "applenotes:folder/ABC", "applenotes:note/", "applenotes:note/xyz", "applenotes:note/A/B", ""]
+        arguments: [
+            "https://example.com/note/ABC", "applenotes:folder/ABC", "applenotes:note/", "applenotes:note/xyz", "applenotes:note/A/B", "",
+            "applenotes://showNote", "applenotes://showNote?identifier=", "applenotes://showNote?identifier=xyz",
+            "applenotes://showFolder?identifier=ABC", "applenotes://showNote/ABC?identifier=ABC",
+        ]
     )
     func otherLink(link: String) {
         #expect(noteID(inLink: link) == nil)

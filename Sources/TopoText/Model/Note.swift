@@ -10,7 +10,7 @@ public struct Note: Sendable, Hashable, Identifiable {
     /// The note's identifier, an uppercase UUID string.
     ///
     /// The identifier is the same on every device that syncs the note,
-    /// and it is the one that `applenotes:note/<identifier>` links use.
+    /// and it is the one that `applenotes:` links to the note use.
     public let id: ID
     /// The title that Notes shows for the note, taken from its first line.
     ///

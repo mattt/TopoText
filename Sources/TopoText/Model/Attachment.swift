@@ -26,7 +26,7 @@ extension Note {
             case mention
             /// An inline link to another note.
             /// ``Attachment/displayText`` has the label,
-            /// ``Attachment/tokenIdentifier`` has the `applenotes:note/…` link,
+            /// ``Attachment/tokenIdentifier`` has the `applenotes:` link,
             /// and ``Attachment/linkedNoteID`` has the identifier of the note.
             case noteLink
             /// The result of a calculation or a graph expression.
@@ -80,7 +80,7 @@ extension Note {
         /// The text that an inline attachment shows, such as `#groceries` for a tag.
         public let displayText: String?
         /// The identifier that an inline attachment refers to:
-        /// the `applenotes:note/…` link of a link to another note,
+        /// the `applenotes:` link of a link to another note,
         /// or the participant of a mention.
         public let tokenIdentifier: String?
         /// The title of the attachment, such as the page title of a link card or the name of a file.

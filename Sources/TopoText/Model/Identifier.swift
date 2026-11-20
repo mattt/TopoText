@@ -46,7 +46,9 @@ extension Identifier: Codable {
 /// Returns the identifier of the note that an `applenotes:` link opens,
 /// or `nil` if the string is not a link to a note.
 ///
-/// Links to other notes have the form `applenotes:note/<identifier>`,
+/// Links to other notes have one of two forms.
+/// Notes on macOS 27 stores an inline link as `applenotes://showNote?identifier=<identifier>`.
+/// Other sources describe `applenotes:note/<identifier>`,
 /// optionally followed by a query such as `?ownerIdentifier=…`.
 /// Links can carry the identifier in lowercase; the result is in uppercase, as Notes stores it.
 func noteID(inLink link: String) -> Note.ID? {
@@ -58,8 +60,15 @@ func noteID(inLink link: String) -> Note.ID? {
     if let host = components.host {
         parts.insert(Substring(host), at: 0)
     }
-    guard parts.count == 2, parts[0].lowercased() == "note",
-        !parts[1].isEmpty, parts[1].allSatisfy({ $0 == "-" || $0.isHexDigit })
-    else { return nil }
-    return Note.ID(parts[1].uppercased())
+    let identifier: Substring
+    if parts.count == 1, parts[0].lowercased() == "shownote" {
+        let item = components.queryItems?.first { $0.name.lowercased() == "identifier" }
+        identifier = Substring(item?.value ?? "")
+    } else if parts.count == 2, parts[0].lowercased() == "note" {
+        identifier = parts[1]
+    } else {
+        return nil
+    }
+    guard !identifier.isEmpty, identifier.allSatisfy({ $0 == "-" || $0.isHexDigit }) else { return nil }
+    return Note.ID(identifier.uppercased())
 }
