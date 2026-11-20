@@ -94,6 +94,30 @@ import Testing
         #expect(try await store.backlinks(to: .id("NOTE-GROCERIES")).isEmpty)
     }
 
+    @Test("A note's link to itself is one of its links but not one of its backlinks")
+    func selfLink() async throws {
+        let id = "0E5A3C7D-2222-4B4B-8C8C-000000000002"
+        try folder.execute(
+            """
+            INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTITLE1, ZFOLDER, ZMODIFICATIONDATE1, ZISPASSWORDPROTECTED) VALUES
+                (70, 12, '\(id)', 'Linked', 2, 700000000, 0);
+            INSERT INTO ZICCLOUDSYNCINGOBJECT (Z_PK, Z_ENT, ZIDENTIFIER, ZTYPEUTI1, ZALTTEXT, ZTOKENCONTENTIDENTIFIER, ZNOTE1, ZMARKEDFORDELETION) VALUES
+                (71, 9, 'LINK-SELF', 'com.apple.notes.inlinetextattachment.link', 'Myself', 'applenotes:note/\(id.lowercased())', 70, 0),
+                (72, 9, 'LINK-IN', 'com.apple.notes.inlinetextattachment.link', 'Linked', 'applenotes://note/\(id)?ownerIdentifier=_abc', 21, 0);
+            """
+        )
+        let target = Note.ID.id(id)
+        #expect(try await store.links(from: [target])[target] == [Note.Link(sourceID: target, targetID: target, label: "Myself")])
+        #expect(try await store.backlinks(to: target) == [Note.Link(sourceID: .id("NOTE-PIE"), targetID: target, label: "Linked")])
+    }
+
+    @Test("A backlink target with LIKE wildcards matches only itself")
+    func backlinkWildcards() async throws {
+        #expect(try await store.backlinks(to: .id("%")).isEmpty)
+        #expect(try await store.backlinks(to: .id("0E5A3C7D_1111%")).isEmpty)
+        #expect(Database.escapedForLike(#"a%b_c\d"#) == #"a\%b\_c\\d"#)
+    }
+
     @Test("The queries read one snapshot together")
     func snapshot() async throws {
         let (smartCount, tagCount, backlinkCount) = try await store.withSnapshot { snapshot in

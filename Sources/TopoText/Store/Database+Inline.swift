@@ -54,6 +54,8 @@ extension Database {
     /// - Parameters:
     ///   - type: The type identifier of the inline attachment.
     ///   - noteIDs: The notes to read, or `nil` for every note.
+    ///   - target: A note whose identifier the use's token must contain, or `nil` for any token.
+    ///     The condition narrows the rows in SQL; the caller still parses each token.
     ///   - includingRecentlyDeleted: Whether notes in Recently Deleted count.
     /// - Throws: ``NotesError/unsupportedSchema`` if the database has inline attachments
     ///   but no column that marks locked notes; ``NotesError/connectionClosed``;
@@ -61,6 +63,7 @@ extension Database {
     func inlineUses(
         of type: String,
         in noteIDs: [Note.ID]? = nil,
+        mentioning target: Note.ID? = nil,
         includingRecentlyDeleted: Bool = false
     ) throws -> [InlineUse] {
         try checkOpen()
@@ -75,9 +78,14 @@ extension Database {
             try isListedNote("n"),
             "COALESCE(n.ZISPASSWORDPROTECTED, 0) = 0",
         ]
-        let bindings: [Binding] = [.integer(entity), .text(type)]
+        var bindings: [Binding] = [.integer(entity), .text(type)]
         if !includingRecentlyDeleted {
             conditions.append("NOT \(isRecentlyDeleted("f"))")
+        }
+        if let target {
+            // LIKE ignores the case of ASCII letters, as links can carry the identifier in lowercase.
+            conditions.append("\(column("i", "ZTOKENCONTENTIDENTIFIER")) LIKE ? ESCAPE '\\'")
+            bindings.append(.text("%note/\(Self.escapedForLike(target.description))%"))
         }
         let select = """
             SELECT n.ZIDENTIFIER, \(column("i", "ZALTTEXT")), \(column("i", "ZTOKENCONTENTIDENTIFIER")), \(sortColumn)
@@ -105,6 +113,18 @@ extension Database {
             uses += try query(sql, bindings + batch.map { .text($0) }, transform: transform).compactMap { $0 }
         }
         return uses
+    }
+
+    /// Escapes the characters that have a meaning in a LIKE pattern, with a backslash.
+    static func escapedForLike(_ text: String) -> String {
+        var escaped = ""
+        for character in text {
+            if character == "\\" || character == "%" || character == "_" {
+                escaped.append("\\")
+            }
+            escaped.append(character)
+        }
+        return escaped
     }
 
     /// The expression that orders uses by the modification date of their note.
@@ -158,7 +178,7 @@ extension Database {
     ///
     /// A link from a note to itself is left out.
     func backlinks(to target: Note.ID) throws -> [Note.Link] {
-        try inlineUses(of: Self.noteLinkType).compactMap(link).filter { $0.targetID == target && $0.sourceID != target }
+        try inlineUses(of: Self.noteLinkType, mentioning: target).compactMap(link).filter { $0.targetID == target && $0.sourceID != target }
     }
 
     private func link(_ use: InlineUse) -> Note.Link? {
