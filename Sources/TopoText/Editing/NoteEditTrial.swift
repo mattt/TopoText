@@ -18,6 +18,20 @@ struct NoteEditTrial: Sendable {
         var restyled: Range<Int>?
         /// The UUID of the replica that makes the edit, or `nil` for a replica that is new to the document.
         var replica: [UInt8]?
+        /// The UTF-16 code units that the edit inserts, or `nil` to check their number alone.
+        var insertedUnits: [UInt16]?
+        /// The paragraph that the edit makes or restyles, or `nil` to check no paragraph.
+        var paragraph: Paragraph?
+
+        /// What a paragraph must be after the edit.
+        struct Paragraph: Hashable, Sendable {
+            /// The offset of the paragraph's first character in the text after the edit.
+            var offset: Int
+            /// The `style` value of the paragraph style, such as 103 for a checklist item.
+            var styleType: Int
+            /// Whether a checklist item is done, or `nil` for a paragraph of another style.
+            var isChecked: Bool?
+        }
     }
 
     /// The result of a trial. No case holds any of the note's contents.
@@ -46,11 +60,19 @@ struct NoteEditTrial: Sendable {
     static func trials(for stored: StoredNote) -> [NoteEditTrial] {
         let length = stored.length
         let paragraphs = stored.paragraphRanges
+        // The last paragraph gets a line feed if it has none, and then comes the item.
+        let item = Array("x".utf16)
+        let appended = (length == 0 || stored.text.utf16.last == 0x0A ? [] : [0x0A]) + item
         var trials = [
             NoteEditTrial(
                 name: "append a checklist item",
                 edit: .appendParagraphs([.init("x", style: .checklist)]),
-                expectation: .init(replaced: length ..< length, inserted: length == 0 || stored.text.utf16.last == 0x0A ? 1 : 2)
+                expectation: .init(
+                    replaced: length ..< length,
+                    inserted: appended.count,
+                    insertedUnits: appended,
+                    paragraph: .init(offset: length + appended.count - item.count, styleType: 103, isChecked: false)
+                )
             )
         ]
         if let first = paragraphs.first {
@@ -59,7 +81,7 @@ struct NoteEditTrial: Sendable {
                 NoteEditTrial(
                     name: "insert text in the first paragraph",
                     edit: .insertText("x", at: .offset(end)),
-                    expectation: .init(replaced: end ..< end, inserted: 1)
+                    expectation: .init(replaced: end ..< end, inserted: 1, insertedUnits: Array("x".utf16))
                 )
             )
         }
@@ -69,7 +91,7 @@ struct NoteEditTrial: Sendable {
                 NoteEditTrial(
                     name: "delete a character of the last paragraph",
                     edit: .deleteText(.range(range)),
-                    expectation: .init(replaced: range, inserted: 0)
+                    expectation: .init(replaced: range, inserted: 0, insertedUnits: [])
                 )
             )
         }
@@ -91,7 +113,13 @@ struct NoteEditTrial: Sendable {
                 NoteEditTrial(
                     name: "change a checklist item's state",
                     edit: .setChecked(!isChecked, at: .index(index)),
-                    expectation: .init(replaced: start ..< start, inserted: 0, restyled: paragraph.full)
+                    expectation: .init(
+                        replaced: start ..< start,
+                        inserted: 0,
+                        restyled: paragraph.full,
+                        insertedUnits: [],
+                        paragraph: .init(offset: start, styleType: 103, isChecked: !isChecked)
+                    )
                 )
             )
             break
@@ -149,6 +177,33 @@ extension StoredNote {
         require(new.count == old.count - replaced.count + inserted, "the text has another length than expected")
         require(new.prefix(replaced.lowerBound) == old.prefix(replaced.lowerBound), "the text before the edit changed")
         require(new.suffix(tail) == old.suffix(tail), "the text after the edit changed")
+        // Merge state that changed as expected does not show that the text is the text that the edit asked for.
+        if let units = expectation.insertedUnits {
+            let start = replaced.lowerBound
+            require(
+                start + units.count <= new.count && Array(new[start ..< start + units.count]) == units,
+                "the new characters are not the ones inserted"
+            )
+        }
+        if let paragraph = expectation.paragraph {
+            let start = min(max(0, paragraph.offset), new.count)
+            let end = new[start...].firstIndex(of: 0x0A).map { $0 + 1 } ?? new.count
+            // The run of a paragraph's first character sets its style. Each checklist run of the paragraph holds the state.
+            var styleType: Int?
+            var states: [Bool] = []
+            var offset = 0
+            for run in edited.runs where run.length > 0 {
+                defer { offset += run.length }
+                guard offset + run.length > start else { continue }
+                guard offset < end else { break }
+                if offset <= start { styleType = run.styleType }
+                if run.styleType == 103 { states.append((run.todo?.varint(2) ?? 0) == 1) }
+            }
+            require(styleType == paragraph.styleType, "the paragraph does not have the expected style")
+            if let isChecked = paragraph.isChecked {
+                require(!states.isEmpty && states.allSatisfy { $0 == isChecked }, "the checklist item does not have the requested state")
+            }
+        }
 
         let kept = expectation.restyled ?? replaced
         let keptTail = old.count - kept.upperBound

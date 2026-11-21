@@ -433,42 +433,53 @@ private func expectConsistent(
 
     @Test("An edit never deletes or splits an attachment")
     func attachments() throws {
-        func error(_ edit: NoteEdit, in document: [UInt8] = RichNote.protobuf) -> NoteEditError? {
+        /// The reason that an edit is refused. An error of another type is not a refusal, and fails the test.
+        func error(_ edit: NoteEdit, in document: [UInt8] = RichNote.protobuf) throws -> NoteEditError? {
             do {
                 _ = try TopoTextTests.edit(document, [edit])
                 return nil
-            } catch {
-                return error as? NoteEditError
+            } catch let error as NoteEditError {
+                return error
             }
         }
-        #expect(error(.deleteText(.range(48 ..< 51))) == .attachmentInRange(type: inlineType("hashtag")))
-        #expect(error(.replaceText(.range(51 ..< 52), with: "x")) == .attachmentInRange(type: inlineType("mention")))
-        #expect(error(.deleteText(.match(.init("\u{FFFC}", occurrence: 3)))) == .attachmentInRange(type: inlineType("link")))
-        #expect(error(.deleteParagraphs(.index(3), through: nil)) == .attachmentInRange(type: inlineType("hashtag")))
-        #expect(error(.deleteText(.paragraphText(.index(3)))) == .attachmentInRange(type: inlineType("hashtag")))
+        #expect(try error(.deleteText(.range(48 ..< 51))) == .attachmentInRange(type: inlineType("hashtag")))
+        #expect(try error(.replaceText(.range(51 ..< 52), with: "x")) == .attachmentInRange(type: inlineType("mention")))
+        #expect(try error(.deleteText(.match(.init("\u{FFFC}", occurrence: 3)))) == .attachmentInRange(type: inlineType("link")))
+        #expect(try error(.deleteParagraphs(.index(3), through: nil)) == .attachmentInRange(type: inlineType("hashtag")))
+        #expect(try error(.deleteText(.paragraphText(.index(3)))) == .attachmentInRange(type: inlineType("hashtag")))
 
         // A table is one character of the text, in a paragraph of its own.
-        #expect(error(.deleteText(.range(54 ..< 57))) == .tableInRange)
-        #expect(error(.deleteParagraphs(.index(4), through: nil)) == .tableInRange)
-        #expect(error(.deleteParagraphs(.index(2), through: .index(5))) == .attachmentInRange(type: inlineType("hashtag")))
-        #expect(error(.insertText("x", at: .startOfParagraph(.index(4)))) == .tableInParagraph)
-        #expect(error(.insertText("x", at: .endOfParagraph(.index(4)))) == .tableInParagraph)
+        #expect(try error(.deleteText(.range(54 ..< 57))) == .tableInRange)
+        #expect(try error(.deleteParagraphs(.index(4), through: nil)) == .tableInRange)
+        #expect(try error(.deleteParagraphs(.index(2), through: .index(5))) == .attachmentInRange(type: inlineType("hashtag")))
+        #expect(try error(.insertText("x", at: .startOfParagraph(.index(4)))) == .tableInParagraph)
+        #expect(try error(.insertText("x", at: .endOfParagraph(.index(4)))) == .tableInParagraph)
         // New paragraphs around the table are fine.
-        #expect(error(.insertParagraphs([.init("Before")], at: .before(.index(4)))) == nil)
-        #expect(error(.insertParagraphs([.init("After")], at: .after(.index(4)))) == nil)
+        var (before, after) = try TopoTextTests.edit(RichNote.protobuf, [.insertParagraphs([.init("Before")], at: .before(.index(4)))])
+        #expect(after.text.contains("\u{FFFC}\nBefore\n\u{FFFC}\nNotes"))
+        try expectConsistent(before, after, replaced: 55 ..< 55, inserted: 7)
+        (before, after) = try TopoTextTests.edit(RichNote.protobuf, [.insertParagraphs([.init("After")], at: .after(.index(4)))])
+        #expect(after.text.contains("\u{FFFC}\n\u{FFFC}\nAfter\nNotes"))
+        try expectConsistent(before, after, replaced: 57 ..< 57, inserted: 6)
         // So is text next to an inline attachment.
-        #expect(error(.insertText("x", at: .offset(50))) == nil)
+        (before, after) = try TopoTextTests.edit(RichNote.protobuf, [.insertText("x", at: .offset(50))])
+        #expect(after.text.contains(" and \u{FFFC}x \u{FFFC} \u{FFFC}\n"))
+        try expectConsistent(before, after, replaced: 50 ..< 50, inserted: 1)
+        #expect(after.runs.filter(\.hasAttachment) == before.runs.filter(\.hasAttachment))
 
         // An attachment's run can hold more than its character. Nothing goes inside the run.
         let wide = storedDocument([run("A"), run("\u{FFFC}\n") { $0.message(12, attachmentInfo("FILE-1", "public.jpeg")) }, run("B")])
-        #expect(error(.insertText("x", at: .offset(2)), in: wide) == .insideAttachment)
-        #expect(error(.insertParagraphs([.init("x")], at: .before(.index(1))), in: wide) == nil)
-        #expect(error(.insertParagraphs([.init("x")], at: .after(.index(0))), in: wide) == nil)
+        #expect(try error(.insertText("x", at: .offset(2)), in: wide) == .insideAttachment)
+        for position in [NoteEdit.ParagraphPosition.before(.index(1)), .after(.index(0))] {
+            (before, after) = try TopoTextTests.edit(wide, [.insertParagraphs([.init("x")], at: position)])
+            #expect(after.text == "A\u{FFFC}\nx\nB")
+            #expect(after.runs.filter(\.hasAttachment) == before.runs.filter(\.hasAttachment))
+        }
         let across = storedDocument([run("A\n"), run("\u{FFFC}\nB") { $0.message(12, attachmentInfo("FILE-1", "public.jpeg")) }])
-        #expect(error(.insertParagraphs([.init("x")], at: .before(.index(2))), in: across) == .insideAttachment)
+        #expect(try error(.insertParagraphs([.init("x")], at: .before(.index(2))), in: across) == .insideAttachment)
 
         // The text that an inserted attachment character would stand in is refused too.
-        #expect(error(.insertText("\u{FFFC}", at: .offset(0))) == .attachmentCharacterInText)
+        #expect(try error(.insertText("\u{FFFC}", at: .offset(0))) == .attachmentCharacterInText)
     }
 
     @Test("Text is not inserted beside an attachment whose run has no type, which can be a table")
@@ -722,6 +733,7 @@ private func expectConsistent(
         let insertions = ["a", "xyz", "é", "😀", " two words ", "1"]
         var note = try RichNote.stored()
         var applied = 0
+        var unchanged = 0
         for step in 0 ..< 240 {
             let replica: UInt8 = step % 3 == 0 ? 0x33 : step % 3 == 1 ? 0x09 : 0xEE
             let length = note.length
@@ -751,19 +763,30 @@ private func expectConsistent(
                 continue
             }
             note = try StoredNote(data: try note.data())
-            applied += 1
             switch edit {
             case .replaceText(.range(let range), let text):
-                guard note != before else { continue }
+                // The text that the replacement must give, worked out without the editor.
+                let old = Array(before.text.utf16)
+                let expected = Array(old[..<range.lowerBound]) + Array(text.utf16) + Array(old[range.upperBound...])
+                #expect(Array(note.text.utf16) == expected, "step \(step)")
+                guard expected != old else {
+                    // Only a replacement that asks for the text that is there may leave the document as it was.
+                    #expect(note.protobuf() == before.protobuf(), "step \(step)")
+                    unchanged += 1
+                    continue
+                }
                 try expectConsistent(before, note, replaced: range, inserted: text.utf16.count, replica: replicaUUID(replica))
             default:
                 #expect(note.brokenInvariants.isEmpty && note.isConnected, "step \(step)")
                 #expect(note.characters.count > before.characters.count)
+                #expect(note.text.contains("\(step)"), "step \(step)")
             }
+            applied += 1
             #expect(note.text.utf16.filter { $0 == 0xFFFC }.count == 4)
             #expect(note.runs.filter(\.hasAttachment) == before.runs.filter(\.hasAttachment))
         }
         #expect(applied > 100)
+        #expect(unchanged > 0)
         #expect(Array(note.replicas.prefix(2)).map(\.uuid) == [RichNote.firstReplica, RichNote.secondReplica])
         #expect(note.replicas.count == 5)
     }

@@ -104,9 +104,59 @@ import Testing
             failures { $0.text = "?" + $0.text.dropFirst() }.contains("the text before the edit changed")
         )
 
+        // The merge state of an insertion is the same whatever the character is. The text must be the one inserted.
+        let exact = NoteEditTrial.Expectation(replaced: end ..< end, inserted: 1, insertedUnits: Array("!".utf16))
+        #expect(before.failures(of: edited, expecting: exact) == [])
+        var wrong = edited
+        var units = Array(edited.text.utf16)
+        units[end] = 0x3F
+        wrong.text = String(decoding: units, as: UTF16.self)
+        #expect(before.failures(of: wrong, expecting: expectation) == [])
+        #expect(before.failures(of: wrong, expecting: exact) == ["the new characters are not the ones inserted"])
+
         // The edit named another replica than the one that made it.
         let other = NoteEditTrial.Expectation(replaced: end ..< end, inserted: 1, replica: replicaUUID(0x11))
         #expect(before.failures(of: edited, expecting: other).contains("a new character is deleted, or is not the editing replica's"))
+    }
+
+    @Test("The check names a checklist item that was left as it was, and a new paragraph with another style or text")
+    func changedParagraphs() throws {
+        let before = try RichNote.stored()
+        let trials = NoteEditTrial.trials(for: before)
+
+        // The second paragraph of the fixture is a checked item, in the run at index 1.
+        let toggle = try #require(trials.first { $0.name == "change a checklist item's state" })
+        #expect(toggle.edit == .setChecked(false, at: .index(1)))
+        let toggled = try NoteEditor().apply([toggle.edit], to: before)
+        #expect(before.failures(of: toggled, expecting: toggle.expectation) == [])
+        // The merge state changes as for a change of state, and the checkbox stays checked.
+        var unchanged = toggled
+        unchanged.runs[1] = before.runs[1]
+        #expect(before.failures(of: unchanged, expecting: toggle.expectation) == ["the checklist item does not have the requested state"])
+        var restyled = toggled
+        restyled.runs[1].paragraphStyle = WireMessage([.init(1, .varint(100))])
+        #expect(
+            before.failures(of: restyled, expecting: toggle.expectation) == [
+                "the paragraph does not have the expected style", "the checklist item does not have the requested state",
+            ]
+        )
+
+        let append = try #require(trials.first { $0.name == "append a checklist item" })
+        let appended = try NoteEditor().apply([append.edit], to: before)
+        #expect(before.failures(of: appended, expecting: append.expectation) == [])
+        var other = appended
+        other.text = String(appended.text.dropLast()) + "y"
+        #expect(before.failures(of: other, expecting: append.expectation) == ["the new characters are not the ones inserted"])
+        var body = appended
+        body.runs[body.runs.count - 1].paragraphStyle = nil
+        #expect(before.failures(of: body, expecting: append.expectation).contains("the paragraph does not have the expected style"))
+        var checked = appended
+        var style = try #require(appended.runs.last?.paragraphStyle)
+        var todo = try #require(appended.runs.last?.todo)
+        todo.setVarint(2, 1)
+        style.setMessage(5, todo)
+        checked.runs[checked.runs.count - 1].paragraphStyle = style
+        #expect(before.failures(of: checked, expecting: append.expectation) == ["the checklist item does not have the requested state"])
     }
 
     @Test("Shifting child indexes writes the bytes that setting the children writes")
