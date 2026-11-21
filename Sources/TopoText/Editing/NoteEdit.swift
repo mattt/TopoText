@@ -134,6 +134,10 @@ enum NoteEditError: Error, Hashable, Sendable {
     case insideAttachment
     /// The paragraph holds a table, and text can't share a paragraph with a table.
     case tableInParagraph
+    /// The paragraph holds an attachment whose run doesn't store its type.
+    /// The type is in the attachment's row in the database, which the editor doesn't read,
+    /// so the attachment can be a table, and text can't share a paragraph with a table.
+    case untypedAttachmentInParagraph
     /// The range would join the start of one paragraph to the end of another, whose styles can differ.
     /// Delete whole paragraphs, or edit each paragraph separately.
     case joinsParagraphs
@@ -180,6 +184,9 @@ extension NoteEditError: LocalizedError {
             return "The position or the paragraph's end is inside an attachment."
         case .tableInParagraph:
             return "The paragraph holds a table, and text can't be added next to a table. Insert a paragraph before or after it."
+        case .untypedAttachmentInParagraph:
+            return
+                "The paragraph holds an attachment of an unknown type, which can be a table, and text can't be added next to a table. Insert a paragraph before or after it."
         case .joinsParagraphs:
             return "The edit would join parts of two paragraphs. Delete whole paragraphs, or edit each paragraph separately."
         case .lineFeedInText:

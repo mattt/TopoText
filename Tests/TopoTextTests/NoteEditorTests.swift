@@ -430,6 +430,28 @@ private func expectConsistent(
         #expect(error(.insertText("\u{FFFC}", at: .offset(0))) == .attachmentCharacterInText)
     }
 
+    @Test("Text is not inserted beside an attachment whose run has no type, which can be a table")
+    func untypedAttachment() throws {
+        // The reader takes the type of such an attachment from its row in the database. The editor has no database.
+        func identifierOnly(_ identifier: String) -> PB {
+            var info = PB()
+            info.string(1, identifier)
+            return info
+        }
+        let documents: [(document: [UInt8], type: String?)] = [
+            (storedDocument([run("A\n"), run("\u{FFFC}") { $0.message(12, identifierOnly("TABLE-1")) }, run("\nB")]), nil),
+            (storedDocument([run("A\n"), run("\u{FFFC}") { $0.message(12, attachmentInfo("TABLE-1", "")) }, run("\nB")]), ""),
+        ]
+        for (document, type) in documents {
+            #expect(throws: NoteEditError.untypedAttachmentInParagraph) { try edit(document, [.insertText("x", at: .startOfParagraph(.index(1)))]) }
+            #expect(throws: NoteEditError.untypedAttachmentInParagraph) { try edit(document, [.insertText("x", at: .endOfParagraph(.index(1)))]) }
+            #expect(throws: NoteEditError.attachmentInRange(type: type)) { try edit(document, [.replaceText(.paragraphText(.index(1)), with: "x")]) }
+            // Other paragraphs, and new paragraphs around the attachment, are edited as usual.
+            #expect(try edit(document, [.insertText("x", at: .endOfParagraph(.index(0)))]).after.text == "Ax\n\u{FFFC}\nB")
+            #expect(try edit(document, [.insertParagraphs([.init("x")], at: .after(.index(1)))]).after.text == "A\n\u{FFFC}\nx\nB")
+        }
+    }
+
     @Test("An edit keeps attachment runs as they were")
     func attachmentRunsKept() throws {
         let (before, after) = try edit(
@@ -835,8 +857,8 @@ private struct SplitMix: RandomNumberGenerator {
             .noteLocked(.id("N")), .unreadableContent, .unsupportedDocument(.runLengths), .paragraphNotFound(.index(3)),
             .paragraphNotFound(.containing("x")), .ambiguousParagraph(.containing("x"), matches: 2), .textNotFound("x"),
             .ambiguousText("x", matches: 2), .occurrenceNotFound("x", matches: 1), .outOfBounds, .splitsCharacter,
-            .attachmentInRange(type: "public.jpeg"), .tableInRange, .insideAttachment, .tableInParagraph, .joinsParagraphs,
-            .lineFeedInText, .attachmentCharacterInText, .emptyParagraph, .notChecklistItem,
+            .attachmentInRange(type: "public.jpeg"), .tableInRange, .insideAttachment, .tableInParagraph, .untypedAttachmentInParagraph,
+            .joinsParagraphs, .lineFeedInText, .attachmentCharacterInText, .emptyParagraph, .notChecklistItem,
         ]
         let descriptions = errors.map { $0.localizedDescription }
         #expect(Set(descriptions).count == errors.count)

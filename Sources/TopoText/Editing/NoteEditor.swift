@@ -134,8 +134,12 @@ struct NoteEditor: Sendable {
         // The paragraph that holds the start of the range: from the line feed before it to the next one.
         let paragraphStart = (units[..<range.lowerBound].lastIndex(of: 0x0A) ?? -1) + 1
         let paragraphEnd = units[range.lowerBound...].firstIndex(of: 0x0A) ?? units.count
-        if !inserted.isEmpty, note.hasTable(in: paragraphStart ..< paragraphEnd) {
-            throw NoteEditError.tableInParagraph
+        if !inserted.isEmpty {
+            switch note.table(in: paragraphStart ..< paragraphEnd) {
+            case .present: throw NoteEditError.tableInParagraph
+            case .possible: throw NoteEditError.untypedAttachmentInParagraph
+            case .absent: break
+            }
         }
         // A range with a line feed joins what is before it to what is after it.
         // That is safe only when one of the two is empty, and new text counts as what is before.
@@ -445,9 +449,22 @@ extension StoredNote {
         return runs[at.index].hasAttachment
     }
 
+    /// Whether a range of the text holds a table.
+    fileprivate enum TablePresence {
+        case present
+        /// An attachment's run has no type. The reader takes the type from the attachment's row in the database,
+        /// which the editor does not read, so the attachment can be a table.
+        case possible
+        case absent
+    }
+
     /// Returns whether a range holds a table.
-    fileprivate func hasTable(in range: Range<Int>) -> Bool {
-        runs(overlapping: range).contains { $0.attachmentType == Note.Attachment.tableType }
+    fileprivate func table(in range: Range<Int>) -> TablePresence {
+        let attachments = runs(overlapping: range).filter(\.hasAttachment)
+        if attachments.contains(where: { $0.attachmentType == Note.Attachment.tableType }) {
+            return .present
+        }
+        return attachments.contains { $0.attachmentType?.isEmpty ?? true } ? .possible : .absent
     }
 
     /// Takes a range of characters out of the runs. A run that loses every character is removed.
