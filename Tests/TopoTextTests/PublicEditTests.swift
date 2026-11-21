@@ -40,18 +40,16 @@ import TopoText
         #expect(paragraphs[4].runs.compactMap(\.attachment).count == 1)
     }
 
-    @Test("A client builds each kind of edit, and names the replica and the identifiers")
+    @Test("A client builds each kind of edit, and names the replica")
     func buildEdits() throws {
         let anchors: [NoteEdit.ParagraphAnchor] = [.index(0), .containing("Trip")]
-        let match = NoteEdit.TextMatch("a", in: .index(1), occurrence: 2)
+        let match = try NoteEdit.TextMatch("a", in: .index(1), occurrence: 2)
         #expect(match.text == "a" && match.paragraph == .index(1) && match.occurrence == 2)
-        var paragraph = NoteEdit.NewParagraph("Milk")
-        #expect(paragraph.style == .body && !paragraph.isChecked)
-        paragraph.style = .numbered
-        paragraph.text = "Eggs"
-        paragraph.isChecked = true
+        let plain = NoteEdit.NewParagraph("Milk")
+        #expect(plain.text == "Milk" && plain.style == .body && !plain.isChecked)
+        let paragraph = NoteEdit.NewParagraph("Eggs", style: .numbered)
 
-        let edits: [NoteEdit] = [
+        let edits: [NoteEdit] = try [
             .insertParagraphs([paragraph, .init("Tea", style: .bulleted)], at: .before(anchors[0])),
             .insertParagraphs([.init("Rice", style: .checklist, isChecked: true)], at: .after(anchors[1])),
             .insertParagraphs([.init("Salt")], at: .end),
@@ -70,11 +68,33 @@ import TopoText
         #expect(NoteEdit.appendParagraphs([paragraph]) == .insertParagraphs([paragraph], at: .end))
 
         let replica = UUID()
-        var editor = NoteEditor(replica: replica, makeIdentifier: { replica })
-        #expect(editor.replica == replica && editor.makeIdentifier() == replica)
+        var editor = NoteEditor(replica: replica)
+        #expect(editor.replica == replica)
         editor.replica = UUID()
-        editor.makeIdentifier = { UUID() }
         #expect(editor.replica != replica)
+    }
+
+    @Test("A match that no note can have is refused when it is made")
+    func invalidMatches() throws {
+        #expect(throws: NoteEditError.emptyMatchText) { try NoteEdit.TextMatch("") }
+        #expect(throws: NoteEditError.emptyMatchText) { try NoteEdit.TextMatch("", in: .index(0), occurrence: 1) }
+        #expect(throws: NoteEditError.invalidOccurrence(0)) { try NoteEdit.TextMatch("a", occurrence: 0) }
+        #expect(throws: NoteEditError.invalidOccurrence(-2)) { try NoteEdit.TextMatch("a", occurrence: -2) }
+        #expect(try NoteEdit.TextMatch("a", occurrence: 1).occurrence == 1)
+        // So an edit with such a match can't be built.
+        #expect(throws: NoteEditError.emptyMatchText) { try NoteEdit.insertText("x", at: .before(.init(""))) }
+        #expect(throws: NoteEditError.invalidOccurrence(0)) { try NoteEdit.deleteText(.match(.init("a", occurrence: 0))) }
+    }
+
+    @Test("New checklist items get identifiers of their own")
+    func newItemIdentifiers() async throws {
+        let folder = try NotesFolder.current()
+        let note = try await TopoText.Store(root: folder.root).note(for: #require(Note.ID("NOTE-GROCERIES")))
+        let items = (0 ..< 8).map { NoteEdit.NewParagraph("Item \($0)", style: .checklist) }
+        let edited = try NoteEditor().edit(try storedData(RichNote.protobuf), of: note, applying: [.appendParagraphs(items)])
+        // The fixture has two items, and each of the ten has another identifier.
+        #expect(try checklistIdentifiers(in: edited).count == 10)
+        #expect(Set(try checklistIdentifiers(in: edited)).count == 10)
     }
 
     @Test("Edits that insert other code units are other edits, and edits that find the same text are the same")
@@ -102,7 +122,7 @@ import TopoText
         #expect(Set([NoteEdit.NewParagraph(composed), .init(decomposed)]).count == 2)
 
         // A match finds either form, so the two matches are one.
-        let same: (NoteEdit, NoteEdit) = (.deleteText(.match(.init(composed))), .deleteText(.match(.init(decomposed))))
+        let same: (NoteEdit, NoteEdit) = try (.deleteText(.match(.init(composed))), .deleteText(.match(.init(decomposed))))
         #expect(same.0 == same.1 && same.0.hashValue == same.1.hashValue)
         #expect(NoteEdit.insertText("x", at: .offset(0)) != .replaceText(.range(0 ..< 0), with: "x"))
     }

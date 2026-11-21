@@ -59,11 +59,11 @@ public enum NoteEdit: Sendable {
         /// The text. Each line feed in it starts another paragraph of the same style.
         ///
         /// A paragraph can be empty. The text can't have the character U+FFFC, which stands for an attachment.
-        public var text: String
+        public let text: String
         /// The style of the paragraph.
-        public var style: Style
+        public let style: Style
         /// Whether a checklist item is done. Other styles ignore it.
-        public var isChecked: Bool
+        public let isChecked: Bool
 
         /// Creates a paragraph to insert.
         /// - Parameters:
@@ -103,19 +103,27 @@ public enum NoteEdit: Sendable {
     /// a letter with an accent matches whether it is stored as one character or as two.
     /// Matches can overlap, and each one counts: "ana" matches twice in "banana".
     public struct TextMatch: Hashable, Sendable {
-        /// The text to find.
-        public var text: String
+        /// The text to find. It is not empty.
+        public let text: String
         /// The paragraph to search, or `nil` to search the note.
-        public var paragraph: ParagraphAnchor?
+        public let paragraph: ParagraphAnchor?
         /// Which match to take, from 1, or `nil` if the text must match once.
-        public var occurrence: Int?
+        public let occurrence: Int?
 
         /// Creates a match of existing text.
         /// - Parameters:
-        ///   - text: The text to find.
+        ///   - text: The text to find, which can't be empty.
         ///   - paragraph: The paragraph to search, or `nil` to search the note.
         ///   - occurrence: Which match to take, from 1, or `nil` if the text must match once.
-        public init(_ text: String, in paragraph: ParagraphAnchor? = nil, occurrence: Int? = nil) {
+        /// - Throws: ``NoteEditError/emptyMatchText`` if the text is empty,
+        ///   or ``NoteEditError/invalidOccurrence(_:)`` if the occurrence is below 1.
+        public init(_ text: String, in paragraph: ParagraphAnchor? = nil, occurrence: Int? = nil) throws {
+            guard !text.isEmpty else {
+                throw NoteEditError.emptyMatchText
+            }
+            if let occurrence, occurrence < 1 {
+                throw NoteEditError.invalidOccurrence(occurrence)
+            }
             self.text = text
             self.paragraph = paragraph
             self.occurrence = occurrence
@@ -223,7 +231,11 @@ public enum NoteEditError: Error, Hashable, Sendable {
     case paragraphNotFound(NoteEdit.ParagraphAnchor)
     /// More than one paragraph contains the text.
     case ambiguousParagraph(NoteEdit.ParagraphAnchor, matches: Int)
-    /// The text to match is empty, or the note doesn't contain it.
+    /// The text of a match is empty. ``NoteEdit/TextMatch/init(_:in:occurrence:)`` throws this error.
+    case emptyMatchText
+    /// The occurrence of a match is below 1. ``NoteEdit/TextMatch/init(_:in:occurrence:)`` throws this error.
+    case invalidOccurrence(Int)
+    /// The note, or the paragraph that the match names, doesn't contain the text.
     case textNotFound(String)
     /// The text matches more than once, and the edit doesn't say which match to take.
     case ambiguousText(String, matches: Int)
@@ -274,6 +286,10 @@ extension NoteEditError: LocalizedError {
             return "No paragraph contains the text."
         case .ambiguousParagraph(_, let matches):
             return "\(matches) paragraphs contain the text. Give more of the paragraph's text, or its index."
+        case .emptyMatchText:
+            return "The text to match is empty."
+        case .invalidOccurrence(let occurrence):
+            return "The occurrence \(occurrence) is not valid. Occurrences count from 1."
         case .textNotFound:
             return "The note doesn't contain the text to match. Text that spans a tag, a mention, or another attachment can't be matched."
         case .ambiguousText(_, let matches):

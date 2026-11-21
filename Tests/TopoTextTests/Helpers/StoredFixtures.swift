@@ -172,6 +172,11 @@ func storedText(_ data: Data) throws -> String {
     try NoteDocument(data: data).text
 }
 
+/// The identifiers of the checklist items in stored contents, one for each run that has one.
+func checklistIdentifiers(in data: Data) throws -> [[UInt8]] {
+    try StoredNote(data: data).runs.compactMap { $0.todo?.bytes(1) }
+}
+
 /// A document with everything that an edit must keep:
 /// several replicas, a tombstone, a substring with two children, fields that no schema names,
 /// checklist items with identifiers and states, a link on a run,

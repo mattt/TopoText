@@ -427,7 +427,7 @@ private func expectConsistent(
         func document(_ last: String) -> [UInt8] {
             storedDocument([run("A\n"), run(last) { $0.message(2, paragraphStyle(103, todo: (item, 1))) }])
         }
-        let clears: [NoteEdit] = [
+        let clears: [NoteEdit] = try [
             .deleteText(.paragraphText(.index(1))), .replaceText(.paragraphText(.index(1)), with: ""), .deleteText(.range(2 ..< 3)),
             .deleteText(.match(.init("B"))),
         ]
@@ -469,7 +469,7 @@ private func expectConsistent(
 
     @Test("An edit that changes nothing returns the same document")
     func noChange() throws {
-        let edits: [NoteEdit] = [
+        let edits: [NoteEdit] = try [
             .replaceText(.match(.init("guide")), with: "guide"), .insertText("", at: .offset(3)), .deleteText(.range(5 ..< 5)),
             .setChecked(true, at: .index(1)), .setChecked(false, at: .containing("Book")),
         ]
@@ -865,9 +865,10 @@ private struct SplitMix: RandomNumberGenerator {
         #expect(try note.range(of: NoteEdit.TextMatch("😀")) == 63 ..< 65)
         #expect(throws: NoteEditError.ambiguousText("a", matches: 4)) { try note.range(of: NoteEdit.TextMatch("a")) }
         #expect(throws: NoteEditError.occurrenceNotFound("a", matches: 4)) { try note.range(of: NoteEdit.TextMatch("a", occurrence: 5)) }
-        #expect(throws: NoteEditError.occurrenceNotFound("a", matches: 4)) { try note.range(of: NoteEdit.TextMatch("a", occurrence: 0)) }
+        // A match with no text, or with an occurrence below 1, can't be made.
+        #expect(throws: NoteEditError.invalidOccurrence(0)) { try note.range(of: NoteEdit.TextMatch("a", occurrence: 0)) }
         #expect(throws: NoteEditError.textNotFound("zebra")) { try note.range(of: NoteEdit.TextMatch("zebra")) }
-        #expect(throws: NoteEditError.textNotFound("")) { try note.range(of: NoteEdit.TextMatch("")) }
+        #expect(throws: NoteEditError.emptyMatchText) { try note.range(of: NoteEdit.TextMatch("")) }
         // A tag's text is not in the stored text, so a match can't span the tag.
         #expect(throws: NoteEditError.textNotFound("and #tag")) { try note.range(of: NoteEdit.TextMatch("and #tag")) }
         // A match stays inside its paragraph.
@@ -1068,7 +1069,7 @@ private struct SplitMix: RandomNumberGenerator {
     func descriptions() {
         let errors: [NoteEditError] = [
             .noteLocked(.id("N")), .unreadableContent, .unsupportedDocument(.runLengths), .paragraphNotFound(.index(3)),
-            .paragraphNotFound(.containing("x")), .ambiguousParagraph(.containing("x"), matches: 2), .textNotFound("x"),
+            .paragraphNotFound(.containing("x")), .ambiguousParagraph(.containing("x"), matches: 2), .emptyMatchText, .invalidOccurrence(0), .textNotFound("x"),
             .ambiguousText("x", matches: 2), .occurrenceNotFound("x", matches: 1), .outOfBounds, .splitsCharacter,
             .attachmentInRange(type: "public.jpeg"), .tableInRange, .insideAttachment, .tableInParagraph, .untypedAttachmentInParagraph,
             .joinsParagraphs, .lineFeedInText, .attachmentCharacterInText, .notChecklistItem,

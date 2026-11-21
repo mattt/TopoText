@@ -34,19 +34,10 @@ public struct NoteEditor: Sendable {
     /// A replica must never give one clock value to two different characters,
     /// so use an editor's replica again only for a document that holds its earlier edits.
     public var replica: UUID
-    /// Makes the identifier of a new checklist item.
-    ///
-    /// The stored form is the 16 bytes of a UUID.
-    /// Notes doesn't derive the identifier from anything, so a random UUID serves.
-    public var makeIdentifier: @Sendable () -> UUID
-
     /// Creates an editor.
-    /// - Parameters:
-    ///   - replica: The replica that the edits belong to. The default is a new UUID.
-    ///   - makeIdentifier: A function that makes the identifier of a new checklist item. The default makes a random UUID.
-    public init(replica: UUID = UUID(), makeIdentifier: @escaping @Sendable () -> UUID = { UUID() }) {
+    /// - Parameter replica: The replica that the edits belong to. The default is a new UUID.
+    public init(replica: UUID = UUID()) {
         self.replica = replica
-        self.makeIdentifier = makeIdentifier
     }
 
     /// Applies edits to the stored contents of a note.
@@ -320,8 +311,11 @@ public struct NoteEditor: Sendable {
     }
 
     /// A `Todo` message with a new identifier.
+    ///
+    /// The stored form of the identifier is the 16 bytes of a UUID.
+    /// Notes doesn't derive it from anything, so a random UUID serves, and each item gets one of its own.
     private func newTodo(isChecked: Bool) -> WireMessage {
-        let identifier = withUnsafeBytes(of: makeIdentifier().uuid) { Array($0) }
+        let identifier = withUnsafeBytes(of: UUID().uuid) { Array($0) }
         return WireMessage([.init(1, .bytes(identifier)), .init(2, .varint(isChecked ? 1 : 0))])
     }
 
