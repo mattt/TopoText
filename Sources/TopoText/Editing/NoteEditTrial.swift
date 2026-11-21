@@ -87,11 +87,20 @@ struct NoteEditTrial: Sendable {
         }
         if let last = paragraphs.last, !last.content.isEmpty {
             let range = last.content.lowerBound ..< last.content.lowerBound + 1
+            // A deletion of all of the paragraph's text keeps the paragraph:
+            // without a line feed, the paragraph gets one, and with one, that line feed can take the paragraph's style.
+            let clears = last.content.count == 1
+            let kept: [UInt16] = clears && !last.hasLineFeed ? [0x0A] : []
             trials.append(
                 NoteEditTrial(
                     name: "delete a character of the last paragraph",
                     edit: .deleteText(.range(range)),
-                    expectation: .init(replaced: range, inserted: 0, insertedUnits: [])
+                    expectation: .init(
+                        replaced: range,
+                        inserted: kept.count,
+                        restyled: clears && last.hasLineFeed ? last.full : nil,
+                        insertedUnits: kept
+                    )
                 )
             )
         }

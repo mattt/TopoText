@@ -47,6 +47,31 @@ import Testing
         #expect(only.first?.run(on: empty) == .sound)
     }
 
+    @Test("The deletion trial is sound when it clears the last paragraph")
+    func deletionTrialOfOneCharacter() throws {
+        let item = Array(repeating: UInt8(0x5A), count: 16)
+        let checklist = run("B") { $0.message(2, paragraphStyle(103, todo: (item, 1))) }
+        // The last paragraph has one character: without a line feed, with one in its run, and with one in a body run.
+        let documents: [(runs: [StoredRun], text: String)] = [
+            ([run("A\n"), run("B")], "A\n\n"),
+            ([run("A\n"), checklist], "A\n\n"),
+            ([run("A\n"), run("B\n")], "A\n\n"),
+            ([run("A\n"), checklist, run("\n")], "A\n\n"),
+            ([run("B")], "\n"),
+        ]
+        for (runs, text) in documents {
+            let stored = try StoredNote(protobuf: storedDocument(runs))
+            let trial = try #require(NoteEditTrial.trials(for: stored).first { $0.name == "delete a character of the last paragraph" })
+            #expect(try NoteEditor().apply([trial.edit], to: stored).text == text)
+            #expect(trial.run(on: stored) == .sound, "\(runs.map(\.text))")
+        }
+        // A longer paragraph loses one character, and gets nothing.
+        let longer = try StoredNote(protobuf: storedDocument([run("A\n"), run("BC")]))
+        let trial = try #require(NoteEditTrial.trials(for: longer).first { $0.name == "delete a character of the last paragraph" })
+        #expect(trial.expectation.inserted == 0 && trial.expectation.restyled == nil)
+        #expect(trial.run(on: longer) == .sound)
+    }
+
     @Test("A trial on a document that the engine does not edit is refused, with the invariant and none of the contents")
     func refusedTrial() throws {
         // No end marker.
