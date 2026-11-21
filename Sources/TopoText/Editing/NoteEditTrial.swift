@@ -87,8 +87,8 @@ struct NoteEditTrial: Sendable {
         }
         if let last = paragraphs.last, !last.content.isEmpty {
             let range = last.content.lowerBound ..< last.content.lowerBound + 1
-            // A deletion of all of the paragraph's text keeps the paragraph:
-            // without a line feed, the paragraph gets one, and with one, that line feed can take the paragraph's style.
+            // A deletion of all of the paragraph's text keeps the paragraph: without a line feed, the paragraph gets one.
+            // The character after the deleted one becomes the paragraph's first, and can take the paragraph's style.
             let clears = last.content.count == 1
             let kept: [UInt16] = clears && !last.hasLineFeed ? [0x0A] : []
             trials.append(
@@ -98,7 +98,7 @@ struct NoteEditTrial: Sendable {
                     expectation: .init(
                         replaced: range,
                         inserted: kept.count,
-                        restyled: clears && last.hasLineFeed ? last.full : nil,
+                        restyled: clears && !last.hasLineFeed ? nil : last.full,
                         insertedUnits: kept
                     )
                 )

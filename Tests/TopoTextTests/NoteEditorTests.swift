@@ -505,6 +505,108 @@ private func expectConsistent(
         #expect(throws: NoteEditError.insideAttachment) { try edit(attached, [.deleteText(.paragraphText(.index(1)))]) }
     }
 
+    @Test(
+        "A paragraph keeps its style when an edit changes its first character",
+        arguments: [1, 100, 103]
+    )
+    func paragraphStyleKept(styleType: Int) throws {
+        let item = Array(repeating: UInt8(0x5A), count: 16)
+        let other = Array(repeating: UInt8(0x6B), count: 16)
+        let kind: Note.ParagraphStyle.Kind = styleType == 1 ? .heading : styleType == 100 ? .bulletedList : .checklist
+        // The paragraph's own style, and another one on a later run of the paragraph, as in `ContentTests`.
+        func own(_ text: String, bold: Bool = false) -> StoredRun {
+            run(text) {
+                $0.message(2, paragraphStyle(styleType, todo: styleType == 103 ? (item, 1) : nil))
+                if bold { $0.int(5, 1) }
+            }
+        }
+        func foreign(_ text: String, bold: Bool = false) -> StoredRun {
+            run(text) {
+                $0.message(2, paragraphStyle(styleType == 103 ? 102 : 103, todo: styleType == 103 ? nil : (other, 0)))
+                if bold { $0.int(5, 1) }
+            }
+        }
+        let layouts: [[StoredRun]] = [
+            // One run for the text and its line feed.
+            [run("A\n"), own("Body text\n", bold: true), run("Z")],
+            // The first run sets the style, and the rest of the paragraph is in a run with another style.
+            [run("A\n"), own("Body"), foreign(" text\n", bold: true), run("Z")],
+            // The line feed is in a run with another style, or with none.
+            [run("A\n"), own("Body text", bold: true), foreign("\n"), run("Z")],
+            [run("A\n"), own("Body"), own(" text", bold: true), run("\nZ")],
+        ]
+        // Each edit, the paragraph's text after it, and how many code units at the end of that text the edit left.
+        let edits: [(edit: NoteEdit, text: String, kept: Int)] = try [
+            (.deleteText(.match(.init("Body"))), " text", 5),
+            (.deleteText(.range(2 ..< 3)), "ody text", 8),
+            (.deleteText(.match(.init("Body te"))), "xt", 2),
+            (.replaceText(.match(.init("Body")), with: "Head"), "Head text", 5),
+            (.replaceText(.range(2 ..< 9), with: "Ne"), "Next", 2),
+            (.insertText("Re ", at: .startOfParagraph(.index(1))), "Re Body text", 9),
+            (.deleteText(.paragraphText(.index(1))), "", 0),
+        ]
+        for runs in layouts {
+            for (edit, text, common) in edits {
+                let before = try StoredNote(protobuf: storedDocument(runs))
+                let edited = try NoteEditor(replica: uuid(0x33)).apply([edit], to: before)
+                let after = try StoredNote(data: try edited.data())
+                let label = Comment(rawValue: "\(runs.map(\.text)) \(edit)")
+                #expect(after.brokenInvariants.isEmpty && after.isConnected, label)
+                #expect(after.text == "A\n\(text)\nZ", label)
+
+                let paragraphs = try decodedParagraphs(after)
+                #expect(paragraphs.map(\.text) == ["A", text, "Z"], label)
+                #expect(paragraphs.map(\.style.kind) == [.body, kind, .body], label)
+                #expect(paragraphs[1].style.isChecked == (styleType == 103), label)
+                // The run of the paragraph's first character holds the checklist item's identifier and state.
+                let first = try #require(after.run(at: 2))
+                #expect(after.runs[first.index].styleType == styleType, label)
+                #expect(after.runs[first.index].todo?.bytes(1) == (styleType == 103 ? item : nil), label)
+                #expect(after.runs[first.index].todo?.varint(2) == (styleType == 103 ? 1 : nil), label)
+                // The text that the edit left has the inline attributes that it had. The end of the paragraph was bold.
+                let new = Array(text.utf16)
+                func inline(_ note: StoredNote, _ range: Range<Int>) -> [WireMessage] {
+                    note.characterAttributes[range].map { attributes in
+                        var attributes = attributes
+                        attributes.set(2, nil)
+                        return attributes
+                    }
+                }
+                #expect(inline(after, 2 + new.count - common ..< 2 + new.count) == inline(before, 11 - common ..< 11), label)
+                if common > 0 {
+                    #expect(paragraphs[1].runs.last?.isBold == true, label)
+                }
+                // The paragraphs around it are as they were.
+                #expect(after.runs.first == before.runs.first, label)
+                #expect(after.runs.last?.paragraphStyle == before.runs.last?.paragraphStyle, label)
+            }
+        }
+    }
+
+    @Test("A deletion across paragraphs keeps the style of the paragraph whose text is left")
+    func paragraphStyleKeptAcrossParagraphs() throws {
+        let item = Array(repeating: UInt8(0x5A), count: 16)
+        let document = storedDocument([
+            run("A\n"), run("Body") { $0.message(2, paragraphStyle(1)) },
+            run(" text\n") {
+                $0.message(2, paragraphStyle(103, todo: (item, 0)))
+                $0.int(5, 1)
+            },
+        ])
+        // From the start of the first paragraph into the heading: the text that is left was in the heading.
+        let (before, after) = try edit(document, [.deleteText(.range(0 ..< 6))])
+        #expect(after.text == " text\n")
+        let paragraphs = try decodedParagraphs(after)
+        #expect(paragraphs.map(\.style.kind) == [.heading])
+        #expect(paragraphs[0].runs.map(\.isBold) == [true])
+        #expect(after.runs.map(\.length) == [6] && after.runs[0].todo == nil)
+        try expectConsistent(before, after, replaced: 0 ..< 6, inserted: 0, attributesChangedIn: 0 ..< 12)
+
+        // The deletion of whole paragraphs leaves the next paragraph as it was.
+        let next = try edit(document, [.deleteParagraphs(.index(0), through: nil)]).after
+        #expect(next.runs == Array(before.runs.dropFirst()))
+    }
+
     @Test("An edit that changes nothing returns the same document")
     func noChange() throws {
         let edits: [NoteEdit] = try [
@@ -863,7 +965,17 @@ private func expectConsistent(
                     unchanged += 1
                     continue
                 }
-                try expectConsistent(before, note, replaced: range, inserted: text.utf16.count + (clearsLast ? 1 : 0), replica: replicaUUID(replica))
+                // A deletion from the start of a paragraph can give the paragraph's style to the text after it.
+                let lineEnd = old[range.upperBound...].firstIndex(of: 0x0A).map { $0 + 1 } ?? old.count
+                let restyled = text.isEmpty && !range.isEmpty && range.lowerBound == start ? range.lowerBound ..< lineEnd : nil
+                try expectConsistent(
+                    before,
+                    note,
+                    replaced: range,
+                    inserted: text.utf16.count + (clearsLast ? 1 : 0),
+                    replica: replicaUUID(replica),
+                    attributesChangedIn: restyled
+                )
             default:
                 #expect(note.brokenInvariants.isEmpty && note.isConnected, "step \(step)")
                 #expect(note.characters.count > before.characters.count)

@@ -142,6 +142,7 @@ If one edit of a call fails, the call returns nothing. The editor refuses:
   the format notes say which.
 
 The editor doesn't change formatting, and doesn't create or change tables and attachments.
+A paragraph keeps its style, and a checklist item its state, whichever of its characters an edit removes.
 
 How Notes itself accepts edited contents is not something TopoText tests:
 the merge rules come from the sources in the format notes,

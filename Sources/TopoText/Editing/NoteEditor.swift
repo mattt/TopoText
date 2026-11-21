@@ -130,9 +130,11 @@ public struct NoteEditor: Sendable {
     /// a line feed takes the place of the text, with the attributes of the paragraph's first character.
     /// The paragraph stays, empty, with its style and, for a checklist item, its identifier and state.
     ///
-    /// A paragraph that has a line feed keeps it, and the line feed becomes the paragraph's first character,
-    /// which sets the paragraph's style. Its run can have another paragraph style than the text had,
-    /// so the line feed takes the paragraph style of the text, as a style operation.
+    /// A paragraph keeps its paragraph style, with a checklist item's identifier and state, whatever the edit removes.
+    /// The run of a paragraph's first character sets the style, so a deletion from the start of a paragraph
+    /// gives the paragraph's style to the next character, text or line feed, when its run has another one.
+    /// This is a style operation on the part of that run that is in the paragraph. The run's other attributes stay.
+    /// New text at the start of a paragraph takes the style from the character that it replaces or precedes.
     /// - Parameter keepingParagraph: Whether the edit changes text within a paragraph, as opposed to deleting paragraphs.
     private func replace(_ range: Range<Int>, with text: String, keepingParagraph: Bool = false, in note: inout StoredNote) throws {
         let units = Array(note.text.utf16)
@@ -199,35 +201,43 @@ public struct NoteEditor: Sendable {
             newRun?.length = inserted.count
         }
 
-        // The style that the paragraph's own line feed must take when the edit clears the paragraph's text.
-        var lineFeedStyle: WireMessage??
-        if keepingParagraph, inserted.isEmpty, !range.isEmpty, range.lowerBound == paragraphStart, range.upperBound == paragraphEnd,
-            paragraphEnd < units.count, let first = note.run(at: range.lowerBound), let lineFeed = note.run(at: paragraphEnd)
-        {
-            let style = note.runs[first.index].paragraphStyle
-            if note.runs[lineFeed.index].paragraphStyle != style {
-                // The line feed gets a run of its own, and an attachment's run must stay one run.
-                if note.isInsideAttachment(paragraphEnd + 1) {
-                    throw NoteEditError.insideAttachment
+        // A deletion from the start of a paragraph makes the character after the range the paragraph's first one,
+        // and the reader takes a paragraph's style from its first character.
+        // That character can be text of a run with another paragraph style, or the paragraph's line feed.
+        // The paragraph is the one that the character was in: where the range holds line feeds, the last of them starts it.
+        var restyled: (range: Range<Int>, style: WireMessage?)?
+        if inserted.isEmpty, !range.isEmpty, range.lowerBound == paragraphStart, range.upperBound < units.count {
+            let start = (units[..<range.upperBound].lastIndex(of: 0x0A) ?? -1) + 1
+            if let first = note.run(at: start), let next = note.run(at: range.upperBound) {
+                let style = note.runs[first.index].paragraphStyle
+                if note.runs[next.index].paragraphStyle != style {
+                    // The part of the next run that is in the paragraph takes the style. Its other attributes stay.
+                    let lineEnd = units[range.upperBound...].firstIndex(of: 0x0A).map { $0 + 1 } ?? units.count
+                    let end = min(next.start + note.runs[next.index].length, lineEnd)
+                    // That part gets a run of its own, and an attachment's run must stay one run.
+                    if note.isInsideAttachment(end) {
+                        throw NoteEditError.insideAttachment
+                    }
+                    restyled = (range.upperBound ..< end, style)
                 }
-                lineFeedStyle = .some(style)
             }
         }
 
         var pass = note.beginPass(replica: replicaBytes)
-        if lineFeedStyle != nil {
-            note.restampVisible(paragraphEnd ..< paragraphEnd + 1, pass: &pass)
+        if let restyled {
+            // A change of paragraph style is a style operation.
+            note.restampVisible(restyled.range, pass: &pass)
         }
         note.deleteVisible(range, pass: &pass)
         note.insertVisible(count: inserted.count, at: range.lowerBound, pass: &pass)
         note.endPass(pass)
 
         note.removeRuns(in: range)
-        if let lineFeedStyle {
-            // The line feed is now at the start of the range.
-            note.splitRun(at: range.lowerBound + 1)
+        if let restyled {
+            // The restyled text is now at the start of the range.
+            note.splitRun(at: range.lowerBound + restyled.range.count)
             let index = note.splitRun(at: range.lowerBound)
-            note.runs[index].paragraphStyle = lineFeedStyle
+            note.runs[index].paragraphStyle = restyled.style
         }
         if let newRun {
             note.insertRuns([newRun], at: range.lowerBound)

@@ -68,8 +68,16 @@ import Testing
         // A longer paragraph loses one character, and gets nothing.
         let longer = try StoredNote(protobuf: storedDocument([run("A\n"), run("BC")]))
         let trial = try #require(NoteEditTrial.trials(for: longer).first { $0.name == "delete a character of the last paragraph" })
-        #expect(trial.expectation.inserted == 0 && trial.expectation.restyled == nil)
+        #expect(trial.expectation.inserted == 0)
         #expect(trial.run(on: longer) == .sound)
+        // The character after the deleted one is in a run with another paragraph style, and takes the paragraph's.
+        let mixed = try StoredNote(
+            protobuf: storedDocument([run("A\n"), run("B") { $0.message(2, paragraphStyle(1)) }, run("C\n") { $0.message(2, paragraphStyle(103)) }])
+        )
+        let mixedTrial = try #require(NoteEditTrial.trials(for: mixed).first { $0.name == "delete a character of the last paragraph" })
+        let edited = try NoteEditor().apply([mixedTrial.edit], to: mixed)
+        #expect(edited.text == "A\nC\n" && edited.runs.last?.styleType == 1)
+        #expect(mixedTrial.run(on: mixed) == .sound)
     }
 
     @Test("A trial on a document that the engine does not edit is refused, with the invariant and none of the contents")

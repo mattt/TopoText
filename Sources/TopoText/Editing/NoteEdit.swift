@@ -29,6 +29,8 @@ public enum NoteEdit: Sendable {
     case replaceText(TextSelection, with: String)
     /// Deletes text.
     ///
+    /// A paragraph keeps its style, and a checklist item its state, when its first characters are deleted,
+    /// and the text that is left keeps its formatting.
     /// Deleting all of a paragraph's text leaves the paragraph, empty, with its style.
     /// To remove the paragraph, use ``deleteParagraphs(_:through:)``.
     case deleteText(TextSelection)
