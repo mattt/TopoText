@@ -982,6 +982,38 @@ private struct SplitMix: RandomNumberGenerator {
         #expect(try error([originSubstring, text, end]) == .unsupportedDocument(.endSubstring))
     }
 
+    @Test("A document with two replicas of one UUID, or with children on the end marker, is refused")
+    func duplicateReplicasAndEndChildren() throws {
+        func error(_ protobuf: [UInt8], replica: UInt8 = 0x33) throws -> NoteEditError? {
+            do {
+                _ = try edit(protobuf, [.insertText("x", at: .offset(1))], replica: replica)
+                return nil
+            } catch let error as NoteEditError {
+                return error
+            }
+        }
+        // Two entries have one UUID and different text clocks. The second entry's character has the clock 1.
+        // An insertion by that UUID would take the first entry's next clock, which is 1 too.
+        let substrings = [
+            originSubstring, SubstringSpec(replica: 1, clock: 0, length: 1, style: (1, 0)),
+            SubstringSpec(replica: 2, clock: 1, length: 1, style: (2, 0)), endSubstring,
+        ]
+        let twice = [ReplicaSpec(uuid: replicaUUID(0x11), clocks: [1, 1]), ReplicaSpec(uuid: replicaUUID(0x11), clocks: [2, 1])]
+        let duplicated = storedDocument([run("ab")], substrings: substrings, replicas: twice)
+        #expect(try error(duplicated, replica: 0x11) == .unsupportedDocument(.uniqueReplicas))
+        #expect(try error(duplicated) == .unsupportedDocument(.uniqueReplicas))
+        let distinct = [ReplicaSpec(uuid: replicaUUID(0x11), clocks: [1, 1]), ReplicaSpec(uuid: replicaUUID(0x22), clocks: [2, 1])]
+        #expect(try error(storedDocument([run("ab")], substrings: substrings, replicas: distinct)) == nil)
+
+        // The end marker points back to the origin, or to itself.
+        for children in [[0], [2]] {
+            var end = endSubstring
+            end.children = children
+            let document = storedDocument([run("ab")], substrings: [originSubstring, SubstringSpec(replica: 1, clock: 0, length: 2, style: (1, 0)), end])
+            #expect(try error(document) == .unsupportedDocument(.childIndexes))
+        }
+    }
+
     @Test("Each error says why the edit was not made")
     func descriptions() {
         let errors: [NoteEditError] = [

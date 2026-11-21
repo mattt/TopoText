@@ -255,6 +255,11 @@ extension NoteEditError {
         case vectorTimestamp = "the document has a vector timestamp"
         /// Each replica of the vector timestamp has a UUID of 16 bytes.
         case replicaIdentifiers = "each replica has a 16-byte UUID"
+        /// No two replicas of the vector timestamp have the same UUID.
+        ///
+        /// A character's identifier names its replica by position, so two entries with one UUID
+        /// would let the editor give a clock value of one entry to a character when the other entry holds it already.
+        case uniqueReplicas = "no two replicas have the same UUID"
         /// No replica clock has a `subclock`, which the engine does not maintain.
         case noSubclock = "no replica clock has a subclock"
         /// The first substring is the origin: it has the identifier (0, 0) and no characters.
@@ -274,7 +279,8 @@ extension NoteEditError {
         /// Each tombstone, which marks deleted text, has the value 1.
         case tombstoneValues = "each tombstone value is 1"
         /// Each substring but the end marker has children, and each child comes later in the list of substrings.
-        case childIndexes = "each substring but the end marker has children, and each child comes later in the list"
+        /// The end marker has none.
+        case childIndexes = "each substring but the end marker has children, each child comes later in the list, and the end marker has none"
         /// The child indexes lead from the first substring to every other one.
         case reachableSubstrings = "each substring can be reached from the first along the child indexes"
         /// No two characters, deleted or not, have the same replica and clock value.

@@ -616,6 +616,7 @@ extension StoredNote {
         require(.validText, textIsValid)
         require(.vectorTimestamp, hasVectorTimestamp)
         require(.replicaIdentifiers, replicas.allSatisfy { $0.uuid.count == 16 })
+        require(.uniqueReplicas, Set(replicas.map(\.uuid)).count == replicas.count)
         require(.noSubclock, !replicas.contains(where: \.hasSubclock))
         require(.originSubstring, substrings.first.map { $0.id == CharacterID(replica: 0, clock: 0) && $0.length == 0 } ?? false)
         require(
@@ -642,7 +643,11 @@ extension StoredNote {
             let timestamp = substring.styleTimestamp
             if id.replica > replicaCount || timestamp.replica > replicaCount { replicaIndexes = false }
             if substring.tombstoneValue > 1 { tombstoneValues = false }
-            if id.clock == Substring.endClock { continue }
+            if id.clock == Substring.endClock {
+                // Nothing comes after the end marker. A child of it would be an edge back into the text.
+                if !substring.children.isEmpty { childIndexes = false }
+                continue
+            }
             if id.clock + substring.length >= limit || timestamp.clock >= limit { clockRange = false }
             if id.replica >= 1, id.replica <= replicaCount, id.clock + substring.length > textClocks[id.replica - 1] {
                 textClockValues = false
