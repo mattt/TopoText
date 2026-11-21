@@ -467,6 +467,44 @@ private func expectConsistent(
         #expect(try edit(storedDocument([run("A\n"), run("\n"), run("B")]), [.deleteParagraphs(.index(2), through: nil)]).after.text == "A\n\n")
     }
 
+    @Test("Clearing a paragraph whose line feed is in another run gives the line feed the paragraph's style")
+    func clearParagraphWithSeparateLineFeed() throws {
+        let item = Array(repeating: UInt8(0x5A), count: 16)
+        func checklist(_ text: String) -> StoredRun {
+            run(text) { $0.message(2, paragraphStyle(103, todo: (item, 1))) }
+        }
+        // The text and its line feed in one run, the line feed in a body run of its own,
+        // and the line feed at the start of the next paragraph's run.
+        let layouts: [(runs: [StoredRun], restyled: Bool)] = [
+            ([run("A\n"), checklist("B\n"), run("C")], false),
+            ([run("A\n"), checklist("B"), run("\n"), run("C")], true),
+            ([run("A\n"), checklist("B"), run("\nC") { $0.int(5, 1) }], true),
+            ([run("A\n"), checklist("B"), run("\n")], true),
+        ]
+        for (runs, restyled) in layouts {
+            let hasNext = runs.map(\.text).joined().hasSuffix("C")
+            let (before, after) = try edit(storedDocument(runs), [.deleteText(.paragraphText(.index(1)))])
+            #expect(after.text == (hasNext ? "A\n\nC" : "A\n\n"))
+            let paragraphs = try decodedParagraphs(after)
+            #expect(paragraphs.map(\.style.kind) == (hasNext ? [.body, .checklist, .body] : [.body, .checklist]))
+            #expect(paragraphs[1].style.isChecked)
+            let lineFeed = try #require(after.run(at: 2))
+            #expect(after.runs[lineFeed.index].todo?.bytes(1) == item)
+            #expect(after.runs[lineFeed.index].todo?.varint(2) == 1)
+            // The next paragraph keeps its own attributes.
+            if hasNext {
+                let next = try #require(after.run(at: 3))
+                #expect(after.runs[next.index].paragraphStyle == nil)
+                #expect(after.runs[next.index].message.varint(5) == before.runs[before.runs.count - 1].message.varint(5))
+            }
+            try expectConsistent(before, after, replaced: 2 ..< 3, inserted: 0, attributesChangedIn: restyled ? 2 ..< 4 : nil)
+        }
+
+        // The line feed is the first character of an attachment's run, which can't be split.
+        let attached = storedDocument([run("A\n"), checklist("B"), run("\n\u{FFFC}") { $0.message(12, attachmentInfo("FILE-1", "public.jpeg")) }])
+        #expect(throws: NoteEditError.insideAttachment) { try edit(attached, [.deleteText(.paragraphText(.index(1)))]) }
+    }
+
     @Test("An edit that changes nothing returns the same document")
     func noChange() throws {
         let edits: [NoteEdit] = try [
