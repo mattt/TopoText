@@ -130,7 +130,7 @@ enum NoteEditError: Error, Hashable, Sendable {
     case attachmentInRange(type: String?)
     /// The range holds a table, which the edit would delete.
     case tableInRange
-    /// The position is inside the run of an attachment, which the edit would split.
+    /// The position, or an end of the paragraph, is inside the run of an attachment, which the edit would split.
     case insideAttachment
     /// The paragraph holds a table, and text can't share a paragraph with a table.
     case tableInParagraph
@@ -177,7 +177,7 @@ extension NoteEditError: LocalizedError {
         case .tableInRange:
             return "The edit would delete a table. Edit the text around it instead."
         case .insideAttachment:
-            return "The position is inside an attachment."
+            return "The position or the paragraph's end is inside an attachment."
         case .tableInParagraph:
             return "The paragraph holds a table, and text can't be added next to a table. Insert a paragraph before or after it."
         case .joinsParagraphs:

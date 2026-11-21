@@ -502,6 +502,31 @@ private func expectConsistent(
         #expect(after.runs[0].todo?.varint(2) == 1)
         #expect(try edit(storedDocument([run("A") { $0.message(2, paragraphStyle(103)) }]), [.setChecked(false, at: .index(0))]).after == before)
     }
+
+    @Test("A change of state never splits the run of an attachment")
+    func setCheckedBesideAttachment() throws {
+        let item = Array(repeating: UInt8(0x5A), count: 16)
+        func attachmentRun(_ text: String) -> StoredRun {
+            run(text) {
+                $0.message(2, paragraphStyle(103, todo: (item, 0)))
+                $0.message(12, attachmentInfo("FILE-1", "public.jpeg"))
+            }
+        }
+        // The item starts inside the attachment's run.
+        let startsInside = storedDocument([run("A\n"), attachmentRun("\u{FFFC}\nItem\n")])
+        #expect(throws: NoteEditError.insideAttachment) { try edit(startsInside, [.setChecked(true, at: .index(2))]) }
+        // The item ends inside the attachment's run.
+        let endsInside = storedDocument([attachmentRun("Item\n\u{FFFC}"), run("\nB")])
+        #expect(throws: NoteEditError.insideAttachment) { try edit(endsInside, [.setChecked(true, at: .index(0))]) }
+
+        // An attachment's run that is the whole paragraph changes state, and stays one run.
+        let whole = storedDocument([run("A\n"), attachmentRun("\u{FFFC}\n"), run("B")])
+        let (before, after) = try edit(whole, [.setChecked(true, at: .index(1))])
+        #expect(after.runs.map(\.length) == [2, 2, 1])
+        #expect(after.runs[1].todo?.varint(2) == 1)
+        #expect(after.runs[1].message.message(12) == before.runs[1].message.message(12))
+        #expect(after.runs.filter(\.hasAttachment).count == 1)
+    }
 }
 
 @Suite struct NoteEditorMergeStateTests {

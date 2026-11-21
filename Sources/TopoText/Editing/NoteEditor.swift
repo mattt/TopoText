@@ -302,6 +302,10 @@ struct NoteEditor: Sendable {
         guard changes else { return }
 
         // A run can cover more than the paragraph. Only the part in the paragraph changes.
+        // A split copies the run's fields to both parts, and an attachment's run must stay one run.
+        for boundary in [range.lowerBound, range.upperBound] where note.isInsideAttachment(boundary) {
+            throw NoteEditError.insideAttachment
+        }
         note.splitRun(at: range.lowerBound)
         note.splitRun(at: range.upperBound)
         var start = 0
