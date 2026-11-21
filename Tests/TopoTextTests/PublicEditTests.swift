@@ -93,8 +93,22 @@ import TopoText
         let items = (0 ..< 8).map { NoteEdit.NewParagraph("Item \($0)", style: .checklist) }
         let edited = try NoteEditor().edit(try storedData(RichNote.protobuf), of: note, applying: [.appendParagraphs(items)])
         // The fixture has two items, and each of the ten has another identifier.
-        #expect(try checklistIdentifiers(in: edited).count == 10)
-        #expect(Set(try checklistIdentifiers(in: edited)).count == 10)
+        let identifiers = try checklistIdentifiers(in: edited)
+        #expect(identifiers.count == 10)
+        #expect(Set(identifiers).count == 10)
+        #expect(Array(identifiers.prefix(2)) == [RichNote.firstItem, RichNote.secondItem])
+        // Each new one is a random UUID, version 4, in 16 bytes.
+        for identifier in identifiers.dropFirst(2) {
+            #expect(identifier.count == 16)
+            #expect(identifier[6] >> 4 == 4 && identifier[8] >> 6 == 2)
+        }
+        // A second edit of the same contents makes other identifiers.
+        let again = try NoteEditor().edit(try storedData(RichNote.protobuf), of: note, applying: [.appendParagraphs(items)])
+        #expect(Set(identifiers.dropFirst(2)).isDisjoint(with: try checklistIdentifiers(in: again).dropFirst(2)))
+
+        // The editor holds its replica and nothing else: it has no function for a caller to replace,
+        // so a caller can't make it give one identifier to two items.
+        #expect(Mirror(reflecting: NoteEditor()).children.map(\.label) == ["replica"])
     }
 
     @Test("Edits that insert other code units are other edits, and edits that find the same text are the same")
