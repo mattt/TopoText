@@ -90,7 +90,8 @@ struct NoteEditor: Sendable {
             var range = paragraphs[lower].content.lowerBound ..< paragraphs[upper].full.upperBound
             // Without a line feed of its own, the last paragraph goes with the line feed before it,
             // so that no empty paragraph is left.
-            if !paragraphs[upper].hasLineFeed, range.lowerBound > 0 {
+            // An empty paragraph before the deleted ones keeps that line feed, which is the paragraph itself.
+            if !paragraphs[upper].hasLineFeed, lower > 0, !paragraphs[lower - 1].content.isEmpty {
                 range = range.lowerBound - 1 ..< range.upperBound
             }
             try replace(range, with: "", in: &note)
@@ -226,19 +227,16 @@ struct NoteEditor: Sendable {
         }
         for (index, piece) in pieces.enumerated() {
             // At the end of the note, the last new paragraph gets no line feed, as the last paragraph of a note has none.
-            let hasLineFeed = !isAtEnd || index < pieces.count - 1
+            // An empty one does get it: text that ends without a line feed has no paragraph after its last character,
+            // so the line feed is all that makes the paragraph and holds its style.
+            let hasLineFeed = !isAtEnd || index < pieces.count - 1 || piece.units.isEmpty
             let length = piece.units.count + (hasLineFeed ? 1 : 0)
             let start = offset + inserted.count
             inserted += piece.units + (hasLineFeed ? [0x0A] : [])
             if piece.paragraph.style != .body {
-                guard length > 0 else {
-                    throw NoteEditError.emptyParagraph
-                }
                 styled.append(start ..< start + length)
             }
-            if length > 0 {
-                runs.append(StoredNote.AttributeRun(length: length, paragraphStyle: paragraphStyle(for: piece.paragraph, writingDirection: direction)))
-            }
+            runs.append(StoredNote.AttributeRun(length: length, paragraphStyle: paragraphStyle(for: piece.paragraph, writingDirection: direction)))
         }
 
         var pass = note.beginPass(replica: replicaBytes)

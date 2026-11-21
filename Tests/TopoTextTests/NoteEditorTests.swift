@@ -190,10 +190,51 @@ private func expectConsistent(
         #expect(after.text == "A\nOne\nTwo\nThree\n\nEnd")
         #expect(try decodedParagraphs(after).map(\.style.kind) == [.body, .bulletedList, .bulletedList, .bulletedList, .body, .body])
 
-        #expect(throws: NoteEditError.emptyParagraph) { try edit(document, [.appendParagraphs([.init("", style: .checklist)])]) }
         #expect(throws: NoteEditError.attachmentCharacterInText) { try edit(document, [.appendParagraphs([.init("a\u{FFFC}")])]) }
         // No paragraphs change nothing.
         #expect(try edit(document, [.appendParagraphs([])]).after.protobuf() == document)
+    }
+
+    @Test("An empty paragraph at the end of a note has a line feed of its own, and stays when the paragraph after it is deleted")
+    func emptyLastParagraph() throws {
+        let title = run("A") { $0.message(2, paragraphStyle(0)) }
+        // Without its own line feed, the text would be "A\n", which is one paragraph.
+        var (before, after) = try edit(storedDocument([title]), [.appendParagraphs([.init("")])])
+        #expect(after.text == "A\n\n")
+        #expect(try decodedParagraphs(after).map(\.style.kind) == [.title, .body])
+        try expectConsistent(before, after, replaced: 1 ..< 1, inserted: 2)
+
+        (before, after) = try edit(storedDocument([run("A\n")]), [.appendParagraphs([.init("B"), .init("")])])
+        #expect(after.text == "A\nB\n\n")
+        #expect(try decodedParagraphs(after).map(\.text) == ["A", "B", ""])
+
+        // The line feed holds the style of an empty list item.
+        (before, after) = try edit(storedDocument([title]), [.appendParagraphs([.init("", style: .checklist, isChecked: true)])])
+        #expect(after.text == "A\n\n")
+        #expect(try decodedParagraphs(after).map(\.style.kind) == [.title, .checklist])
+        #expect(try decodedParagraphs(after).map(\.style.isChecked) == [false, true])
+        try expectConsistent(before, after, replaced: 1 ..< 1, inserted: 2)
+
+        (before, after) = try edit(storedDocument([]), [.appendParagraphs([.init("")])])
+        #expect(after.text == "\n")
+        #expect(try decodedParagraphs(after).map(\.style.kind) == [.body])
+
+        // The last paragraph goes without the line feed before it when that line feed is an empty paragraph.
+        let spaced = storedDocument([title, run("\n"), run("\n"), run("B") { $0.message(2, paragraphStyle(100)) }])
+        #expect(try decodedParagraphs(try StoredNote(protobuf: spaced)).map(\.style.kind) == [.title, .body, .bulletedList])
+        (before, after) = try edit(spaced, [.deleteParagraphs(.index(2), through: nil)])
+        #expect(after.text == "A\n\n")
+        #expect(try decodedParagraphs(after).map(\.style.kind) == [.title, .body])
+        try expectConsistent(before, after, replaced: 3 ..< 4, inserted: 0)
+
+        (before, after) = try edit(storedDocument([run("\n"), run("B")]), [.deleteParagraphs(.index(1), through: nil)])
+        #expect(after.text == "\n")
+        #expect(try decodedParagraphs(after).count == 1)
+
+        // After a paragraph with text, it goes with the line feed before it, as before.
+        (before, after) = try edit(storedDocument([run("A\n"), run("B\n"), run("C")]), [.deleteParagraphs(.index(1), through: .index(2))])
+        #expect(after.text == "A")
+        #expect(try decodedParagraphs(after).count == 1)
     }
 
     @Test("Paragraphs are inserted before and after a paragraph")
@@ -858,7 +899,7 @@ private struct SplitMix: RandomNumberGenerator {
             .paragraphNotFound(.containing("x")), .ambiguousParagraph(.containing("x"), matches: 2), .textNotFound("x"),
             .ambiguousText("x", matches: 2), .occurrenceNotFound("x", matches: 1), .outOfBounds, .splitsCharacter,
             .attachmentInRange(type: "public.jpeg"), .tableInRange, .insideAttachment, .tableInParagraph, .untypedAttachmentInParagraph,
-            .joinsParagraphs, .lineFeedInText, .attachmentCharacterInText, .emptyParagraph, .notChecklistItem,
+            .joinsParagraphs, .lineFeedInText, .attachmentCharacterInText, .notChecklistItem,
         ]
         let descriptions = errors.map { $0.localizedDescription }
         #expect(Set(descriptions).count == errors.count)

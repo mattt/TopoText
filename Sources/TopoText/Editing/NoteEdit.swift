@@ -145,8 +145,6 @@ enum NoteEditError: Error, Hashable, Sendable {
     case lineFeedInText
     /// The new text has the character U+FFFC, which stands for an attachment in stored text.
     case attachmentCharacterInText
-    /// A list or checklist paragraph at the end of the note has no text, so nothing would hold its style.
-    case emptyParagraph
     /// The paragraph is not a checklist item.
     case notChecklistItem
 }
@@ -193,8 +191,6 @@ extension NoteEditError: LocalizedError {
             return "The new text has a line feed. Insert paragraphs instead."
         case .attachmentCharacterInText:
             return "The new text has the character U+FFFC, which stands for an attachment."
-        case .emptyParagraph:
-            return "A list item at the end of the note needs text."
         case .notChecklistItem:
             return "The paragraph is not a checklist item."
         }
