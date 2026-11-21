@@ -801,6 +801,21 @@ private struct SplitMix: RandomNumberGenerator {
         #expect(throws: NoteEditError.textNotFound("hotel")) { try note.range(of: NoteEdit.TextMatch("hotel", in: .index(1))) }
     }
 
+    @Test("Matches that overlap each count")
+    func overlappingMatches() throws {
+        let note = try StoredNote(protobuf: storedDocument([run("banana 😀😀😀")]))
+        #expect(throws: NoteEditError.ambiguousText("ana", matches: 2)) { try note.range(of: NoteEdit.TextMatch("ana")) }
+        #expect(try note.range(of: NoteEdit.TextMatch("ana", occurrence: 1)) == 1 ..< 4)
+        #expect(try note.range(of: NoteEdit.TextMatch("ana", occurrence: 2)) == 3 ..< 6)
+        #expect(throws: NoteEditError.occurrenceNotFound("ana", matches: 2)) { try note.range(of: NoteEdit.TextMatch("ana", occurrence: 3)) }
+        // The search resumes after a whole character, not inside a surrogate pair.
+        #expect(throws: NoteEditError.ambiguousText("😀😀", matches: 2)) { try note.range(of: NoteEdit.TextMatch("😀😀")) }
+        #expect(try note.range(of: NoteEdit.TextMatch("😀😀", occurrence: 2)) == 9 ..< 13)
+        #expect(throws: NoteEditError.ambiguousText("ana", matches: 2)) {
+            try edit(storedDocument([run("banana")]), [.replaceText(.match(.init("ana")), with: "x")])
+        }
+    }
+
     @Test("A paragraph is named by its index or by text that only it contains")
     func paragraphs() throws {
         let note = try RichNote.stored()

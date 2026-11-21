@@ -399,7 +399,10 @@ extension StoredNote {
         }
     }
 
-    /// The ranges where text occurs in a range of the note's text, from first to last, without overlap.
+    /// The ranges where text occurs in a range of the note's text, from first to last.
+    ///
+    /// Occurrences can overlap, as the two of "ana" in "banana" do, and each one counts:
+    /// an edit that names one of them without saying which is ambiguous.
     ///
     /// The comparison is exact but for the composition of characters:
     /// a letter with an accent matches whether it is stored as one character or as two.
@@ -412,7 +415,10 @@ extension StoredNote {
             let match = string.range(of: text, options: [], range: NSRange(location: start, length: scope.upperBound - start))
             guard match.location != NSNotFound, match.length > 0 else { break }
             found.append(match.location ..< match.location + match.length)
-            start = match.location + match.length
+            // The next occurrence can start inside this one, after its first character.
+            let first = string.character(at: match.location)
+            let isPair = UTF16.isLeadSurrogate(first) && match.length > 1 && UTF16.isTrailSurrogate(string.character(at: match.location + 1))
+            start = match.location + (isPair ? 2 : 1)
         }
         return found
     }
