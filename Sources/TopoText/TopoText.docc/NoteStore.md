@@ -24,6 +24,18 @@ The earliest and most original sources are these two projects:
   cited as DUN at [`582e569`](https://github.com/dunhamsteve/notesutils/blob/582e569c9d0a6b398e91099260eaf761366a5f68/notes.md):
   the table CRDT, including how deleted and repeated rows and columns are left out.
 
+Two sources describe the merge state of a note, which the first two leave out:
+
+- Apple's own schema files, `topotext.proto` and `versioned-document.proto`,
+  which the Notes web app once shipped (DUN mentions them).
+  A copy is in [ElyaConrad/iCloud-API@7edb504](https://github.com/ElyaConrad/iCloud-API/tree/7edb504f1727066192178c8dd4cdb1d09742333f/resources/protobuf),
+  cited as PROTO. The comments in the files are Apple's.
+- [coddingtonbear/icloud-md@ffa20ef](https://github.com/coddingtonbear/icloud-md/tree/ffa20ef6378a453f0935d26f03acedf3e58540f2)
+  (MIT), cited as ICMD: `proto/topotext.proto`, `src/notes/noteDocument.ts`, and `src/notes/formatReconcile.ts`.
+  The project edits notes through iCloud's web interface.
+  Its comments record what the Notes web app and Notes on iOS wrote in captured requests,
+  and what the web app's code does.
+
 Later projects confirm these facts on newer releases and add a few:
 
 | Short name | Repository and commit |
@@ -155,6 +167,19 @@ Values:
 - `emphasis_style`: the highlight color, 1 purple, 2 pink, 3 orange, 4 mint, 5 blue.
 - `ParagraphStyle` field 7 is the starting number of a numbered list (BTT; sweetrb).
 
+The messages have more fields than these, and Apple's names differ (PROTO):
+`NoteStoreProto` is `Document`, with `serializationVersion` [1] and repeated `Version` [2].
+ACNP's `Document` is `Version`, with `serializationVersion` [1], `minimumSupportedVersion` [2], and `data` [3];
+the field that ACNP calls `version` is `minimumSupportedVersion`.
+`Note` is `String`, and its other fields are the merge state, described below.
+Runs also have `writingDirection` [11], `timestamp` [13] ("not used, for future compatibility" in PROTO),
+and `systemAttachmentInfo` [15] (ICMD).
+Paragraph styles also have `writingDirection` [3], `paragraphHints` [6], and `uuid` [9], which holds 16 bytes (ICMD).
+The Notes web app writes body text with `style_type` 3 (ICMD).
+Notes on macOS doesn't: the runs on macOS found no such value,
+and found a paragraph style on 99 of 100 runs, half of them without a `style_type`.
+So on macOS, body text has a paragraph style with no `style_type` **[inference]**.
+
 Reading the text:
 
 - Run lengths count UTF-16 code units (BTT; sweetrb).
@@ -163,6 +188,110 @@ Reading the text:
   For an empty paragraph, that character is its line feed.
 - Text past the last run is body text.
 - Each attachment stands in the text as U+FFFC, in a run with `attachment_info`.
+
+## Merge state
+
+Notes combines the edits of several devices without a server that orders them.
+For that, the stored document records who inserted each character and when,
+and keeps deleted characters.
+``Store`` doesn't read this state.
+The edit engine (``NoteEditor``, with the internal `StoredNote`) keeps it and updates it.
+
+```proto
+message String {
+  optional string string = 2; repeated Substring substring = 3; optional VectorTimestamp timestamp = 4;
+  repeated AttributeRun attributeRun = 5; repeated Attachment attachment = 6; }
+message Substring {
+  optional CharID charID = 1; optional uint32 length = 2; optional CharID timestamp = 3;
+  optional bool tombstone = 4; repeated uint32 child = 5; }
+message CharID { optional uint32 replicaID = 1; optional uint32 clock = 2; }
+message VectorTimestamp { repeated Clock clock = 1; }
+message Clock { optional bytes replicaUUID = 1; repeated ReplicaClock replicaClock = 2; }
+message ReplicaClock { optional uint32 clock = 1; optional uint32 subclock = 2; }
+```
+
+The schema is PROTO's. What the fields hold:
+
+- A substring is a run of characters that one replica inserted together.
+  `charID` identifies its first character, and each following character has the next clock value (DUN; ICMD).
+  `length` counts UTF-16 code units (PROTO).
+- The substrings are in the order of the text.
+  The text is the substrings without a `tombstone`, joined (ICMD).
+  A substring with a `tombstone` holds deleted characters, which stay in the document for merging (DUN; ICMD).
+- The first substring has no characters and the identifier (0, 0).
+  The last has no characters and the identifier (0, 0xFFFFFFFF) (ICMD).
+- `child` holds indexes into the substring list (PROTO).
+  They are the edges of the graph of insertions, and each one points to a later substring.
+  In a document that one device wrote in order, each substring has the next one as its only child.
+  After concurrent insertions at one place, a substring has several children (ICMD; DUN: "it forms a DAG").
+- `timestamp` on a substring is its style timestamp (PROTO):
+  the replica that last set the style of the characters, and that replica's style clock at the time.
+  New text has the clock 0 (ICMD).
+- The vector timestamp has an entry for each replica that edited the note, with a 16-byte UUID.
+  `replicaID` is a 1-based index into the entries; 0 belongs to the first and last substrings (ICMD).
+- A replica has two clocks.
+  The first is its text clock: the number of UTF-16 code units that it has inserted.
+  The second is its style clock: the number of its next style operation (ICMD).
+  No source has seen `subclock` set.
+- Table cells are `String` messages without a vector timestamp (ICMD).
+- **[inference]** `ZICNOTEDATA.ZDATA` holds the same message as the field that iCloud syncs.
+  ACNP and DUN read fields 2, 3, and 5 from the database, and ICMD reads the same fields from iCloud,
+  but ICMD never saw a database, and ACNP and DUN never decoded the merge state.
+  The run on macOS 27.0.1 supports it: every stored document had the structure that ICMD describes.
+
+What a local edit changes (ICMD, from the Notes web app's requests and code):
+
+- A replica that is new to the document gets an entry,
+  with both clocks at the highest values among the other entries.
+- Inserted text becomes a substring with the identifier (replica, text clock) and the style timestamp (replica, 0).
+  The text clock advances by the length.
+  If the substring before it holds the replica's newest characters, that substring grows instead.
+- The new substring goes between its neighbors in the list.
+  It takes the place of the edge between them,
+  or, when they have no edge, takes over the children of the substring before it and becomes that one's only child.
+- A substring that an edit covers in part is split.
+  The second part continues the clock, keeps the style timestamp and the tombstone,
+  takes over the children, and becomes the only child of the first part.
+- Deleted text gets a `tombstone` of 1 and a new style timestamp, (replica, max(old clock + 8, floor)).
+  A deletion counts as a style operation, and the 8 lets it win against concurrent style changes.
+- A style change, such as a checklist item's state, gives the text (replica, max(old clock + 1, floor)).
+- The floor is the highest style timestamp in the document,
+  plus one if that timestamp would win a tie against the replica.
+  Timestamps compare by clock, then by the bytes of the replica's UUID.
+  The floor is never below the replica's own style clock.
+- Afterwards the replica's style clock is one past the highest clock that the edit wrote.
+  An edit that only made a substring grow leaves the style clock alone,
+  and one that added a substring leaves it at 1 or more.
+
+Choices that TopoText's edit engine makes where no source decides.
+The counts are from the run on macOS 27.0.1 that the last section describes:
+
+- **[inference]** A new paragraph gets a paragraph style with `style_type` for a list and none for body text,
+  `writingDirection` [3] with the value of the nearest paragraph that has one,
+  and `checklist` for a checklist item.
+  89 of 100 stored styles had field 3; its values were not counted in that run.
+  In a note where no style has field 3, new body text gets a run without a paragraph style, as 1 of 100 stored runs was.
+- **[inference]** A list style on a new paragraph counts as a style operation on its text, as it does in ICMD.
+- A new checklist item's `uuid` is the 16 bytes of a random UUID.
+  All 959 stored identifiers were version 4 UUIDs, and no two paragraphs shared one.
+- **[inference]** The engine does not write paragraph style field 9 on a new paragraph.
+  28 of 100 stored styles had it, in 16 bytes, so Notes reads styles without it.
+  Which paragraphs get one is not known.
+- **[inference]** The engine does not write run field 13 on the run of a new paragraph.
+  92 of 100 stored runs had it, so the usual run has one, but what value belongs on new text is not known.
+  Text that is inserted into a paragraph takes the field with the other attributes of its neighbor,
+  and a run that is split keeps fields 9 and 13 on both parts.
+- The gzip header that the engine writes has the operating system byte 19, as 1,551 of 1,566 stored documents had.
+  The other 15 had 3; what wrote them is not known.
+
+Not known:
+
+- Whether Notes on macOS accepts, from its own database, a replica that it did not create.
+  ICMD's rules were checked against iCloud and other devices, not against the database.
+- Where a device keeps its own replica UUID, and whether Notes checks it.
+- What run field 13 and paragraph style field 9 mean.
+- What value paragraph style field 3 has, and which client writes the gzip operating system byte 3.
+  `Tools/Validate` counts both.
 
 ## Attachments
 
@@ -323,6 +452,36 @@ A run on macOS 27 found the following:
   and when the first line has an inline attachment, it includes the attachment's text.
   Other titles don't appear in the text at all, for reasons that are not known yet.
   TopoText returns `ZTITLE1` as the title.
+
+A run on 2026-11-20, on macOS 27.0.1, checked the stored documents of the 1,566 unlocked notes
+against what the edit engine relies on:
+
+- Every document encodes to its stored bytes, and the stored bytes are in the canonical form,
+  so a field that an edit writes has the same form as the fields around it.
+- Every document has every property that the engine required at the time of the run:
+  one version, a vector timestamp, replicas with 16-byte UUIDs and no `subclock`,
+  an end marker as the last substring, substring and run lengths that add up to the text,
+  clocks within each replica's text clock, tombstones of 1, and children that come later in the list.
+  The engine has required more since, and the run did not measure these properties:
+  a distinct UUID for each replica, a path along the child indexes from the first substring to every other one,
+  an identifier of its own for each character, with a replica index from 1,
+  and an end marker with the replica 0, no characters, and no children.
+- The messages have only the fields that the format notes name:
+  `String` 2 to 5, `Substring` 1 to 5, and `Clock` 1 and 2. `minimumSupportedVersion` is 0.
+- Every replica has two clocks.
+  The first substring is the empty one with the identifier (0, 0),
+  and the end marker has the style timestamp (0, 0xFFFFFFFF).
+- 1,334 notes have one replica, and 3 have more than ten.
+- 159,914 of 232,751 substrings have a tombstone: most of what a document holds is deleted text.
+  5 substrings have more than one child.
+- 95,059 of 95,947 runs have a paragraph style, and 46,472 styles have a `style_type`.
+  Paragraph style field 3 is on 84,446 styles and field 9, in 16 bytes, on 26,717. Run field 13 is on 88,020 runs.
+- The 959 checklist runs have identifiers of 16 bytes that are version 4 UUIDs, and no identifier is in two paragraphs.
+- The gzip header has no flags. Its operating system byte is 19 in 1,551 documents and 3 in 15.
+- An edit that the tool applied in memory, which appended a checklist item, passed the tool's check in 1,563 documents and failed it in 3.
+  The check compared whole substrings, child indexes included.
+  In a document where an earlier substring points to the end marker, an insertion at the end changes that index, and the check counted it as a failure.
+  Whether that explains the 3 is not confirmed; the tool now reports which check fails.
 
 ## Not read
 

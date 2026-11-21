@@ -5,6 +5,8 @@ It lists folders and notes,
 searches notes by their contents,
 and decodes each note into paragraphs of formatted text,
 including checklists, tables, and attachments.
+It can also apply edits to the stored contents of a note in memory,
+without writing anything to the database.
 
 The name comes from Apple's internal name for the note text format.
 
@@ -81,6 +83,71 @@ Each call opens the database read-only and closes it before returning.
 TopoText never writes to the database or copies it.
 To make several reads from one consistent snapshot, use `withSnapshot(_:)`.
 
+## Editing
+
+Editing needs TopoText 0.4.0 or later, so depend on the package with `from: "0.4.0"`.
+
+`NoteEditor` applies edits to the stored contents of a note
+and returns new contents for the same note.
+It works on bytes:
+you give it the contents of the note's row in `ZICNOTEDATA.ZDATA`, which you read yourself,
+and it returns the edited document, gzip-compressed as Notes stores it.
+The editor writes nothing to the Notes database, and TopoText has no API that does.
+What you do with the returned contents is up to you.
+
+```swift
+let editor = NoteEditor()
+let edited = try editor.edit(
+    data,
+    of: note,
+    applying: [
+        .replaceText(.match(.init("hotel")), with: "hostel"),
+        .setChecked(true, at: .containing("Book")),
+        .appendParagraphs([.init("Call ahead", style: .checklist)]),
+    ]
+)
+```
+
+An edit inserts paragraphs of body text, list items, or checklist items,
+inserts, replaces, or deletes text within a paragraph,
+deletes whole paragraphs,
+or sets whether a checklist item is done.
+It names its place by a paragraph or by a match of existing text,
+so a caller doesn't have to count UTF-16 code units.
+A match by text alone fails if the text is absent or occurs more than once.
+An occurrence number or a paragraph index counts in the text as it is when the edit applies,
+so it names another place after an earlier insertion or deletion.
+The editor updates the text, the attribute runs,
+and the state that Notes uses to merge edits from several devices,
+and leaves every other part of the document as it was.
+The edits of a call apply in order.
+
+The editor refuses an edit rather than guess, and throws a `NoteEditError` that says why.
+If one edit of a call fails, the call returns nothing. The editor refuses:
+
+- a locked note, and contents that are not a note document;
+- a match that is absent, or that occurs more than once when the edit doesn't say which occurrence it means;
+- a range that would delete or split an attachment or a table,
+  and text in the same paragraph as a table or as an attachment whose run doesn't store its type;
+- a range that would join parts of two paragraphs, or split a surrogate pair,
+  the two UTF-16 code units of one Unicode scalar;
+- new text with a carriage return or a line feed outside `insertParagraphs`,
+  or with the attachment character U+FFFC;
+- a match with no text, or with an occurrence below 1, when the match is made;
+- a change of state for a paragraph that is not a checklist item;
+- a document without one of the properties that the editor relies on,
+  such as a vector timestamp and consistent merge state.
+  `NoteEditError.Invariant` lists them.
+  A run against one real database measured some of these properties and not others;
+  the format notes say which.
+
+The editor doesn't change formatting, and doesn't create or change tables and attachments.
+A paragraph keeps its style, and a checklist item its state, whichever of its characters an edit removes.
+
+How Notes itself accepts edited contents is not something TopoText tests:
+the merge rules come from the sources in the format notes,
+and the checks run on documents in memory.
+
 ## Development
 
 ```sh
@@ -98,6 +165,11 @@ swift run Validate --applescript
 
 The tool prints only counts, never titles or text,
 and compares its count of notes with the one from AppleScript.
+It also checks that each note's stored document encodes back to the same bytes.
+That comparison is of the decompressed protocol buffer bytes;
+gzip allows many encodings of one input, so the compressed bytes are not compared.
+The tool then applies a few trial edits to each document in memory and checks the results.
+It writes nothing to the database.
 Your terminal needs Full Disk Access to run it.
 
 The [format notes](Sources/TopoText/TopoText.docc/NoteStore.md)
@@ -127,6 +199,10 @@ These projects contributed specific findings:
   the starting number of numbered lists
 - 6over3's [NotesKit](https://github.com/6over3/NotesKit):
   following indirection in tables
+- coddingtonbear's [icloud-md](https://github.com/coddingtonbear/icloud-md):
+  how an edit updates the state that Notes merges with
+- ElyaConrad's [iCloud-API](https://github.com/ElyaConrad/iCloud-API):
+  a copy of Apple's schema for the note text format
 
 TopoText contains no code from these projects.
 
