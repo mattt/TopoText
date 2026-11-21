@@ -77,6 +77,36 @@ import TopoText
         #expect(editor.replica != replica)
     }
 
+    @Test("Edits that insert other code units are other edits, and edits that find the same text are the same")
+    func equality() async throws {
+        let composed = "caf\u{E9}"
+        let decomposed = "cafe\u{301}"
+        #expect(composed == decomposed)
+        let pairs: [(NoteEdit, NoteEdit)] = [
+            (.insertText(composed, at: .offset(0)), .insertText(decomposed, at: .offset(0))),
+            (.replaceText(.range(0 ..< 1), with: composed), .replaceText(.range(0 ..< 1), with: decomposed)),
+            (.appendParagraphs([.init(composed)]), .appendParagraphs([.init(decomposed)])),
+        ]
+        let folder = try NotesFolder.current()
+        let note = try await TopoText.Store(root: folder.root).note(for: #require(Note.ID("NOTE-GROCERIES")))
+        let data = try storedData(RichNote.protobuf)
+        for (first, second) in pairs {
+            #expect(first != second)
+            #expect(Set([first, second]).count == 2)
+            #expect(Set([first, first]).count == 1)
+            // The two give other contents, so they are not one edit.
+            let results = try [first, second].map { try storedText(NoteEditor().edit(data, of: note, applying: [$0])).utf16.count }
+            #expect(results[1] == results[0] + 1)
+        }
+        #expect(NoteEdit.NewParagraph(composed) != NoteEdit.NewParagraph(decomposed))
+        #expect(Set([NoteEdit.NewParagraph(composed), .init(decomposed)]).count == 2)
+
+        // A match finds either form, so the two matches are one.
+        let same: (NoteEdit, NoteEdit) = (.deleteText(.match(.init(composed))), .deleteText(.match(.init(decomposed))))
+        #expect(same.0 == same.1 && same.0.hashValue == same.1.hashValue)
+        #expect(NoteEdit.insertText("x", at: .offset(0)) != .replaceText(.range(0 ..< 0), with: "x"))
+    }
+
     @Test("A client reads why an edit was not made")
     func refusals() async throws {
         let folder = try NotesFolder.current()

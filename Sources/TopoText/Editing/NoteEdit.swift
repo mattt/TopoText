@@ -11,7 +11,12 @@ import Foundation
 /// The text of a tag or a mention is not in the stored text, so a match can't span one.
 ///
 /// Pass edits to ``NoteEditor/edit(_:of:applying:)``.
-public enum NoteEdit: Hashable, Sendable {
+///
+/// Two edits are equal when they do the same thing.
+/// Text to insert compares by its UTF-16 code units, because those are what the edit writes:
+/// "é" as one character is another insertion than "e" with a combining accent.
+/// Text to find compares as Swift strings do, by canonical equivalence, because a match finds either form.
+public enum NoteEdit: Sendable {
     /// Inserts paragraphs at the end of the note, or before or after a paragraph.
     case insertParagraphs([NewParagraph], at: ParagraphPosition)
     /// Inserts text within a paragraph. The text can't contain a line feed.
@@ -36,7 +41,9 @@ public enum NoteEdit: Hashable, Sendable {
     }
 
     /// A paragraph to insert.
-    public struct NewParagraph: Hashable, Sendable {
+    ///
+    /// Two paragraphs are equal when they have the same style and state, and their text has the same UTF-16 code units.
+    public struct NewParagraph: Sendable {
         /// The style of a new paragraph.
         public enum Style: Hashable, Sendable {
             /// Body text.
@@ -137,6 +144,67 @@ public enum NoteEdit: Hashable, Sendable {
         case paragraphText(ParagraphAnchor)
         /// A range of the stored text, in UTF-16 code units.
         case range(Range<Int>)
+    }
+}
+
+extension NoteEdit.NewParagraph: Hashable {
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.text.utf16.elementsEqual(rhs.text.utf16) && lhs.style == rhs.style && lhs.isChecked == rhs.isChecked
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(Array(text.utf16))
+        hasher.combine(style)
+        hasher.combine(isChecked)
+    }
+}
+
+extension NoteEdit: Hashable {
+    public static func == (lhs: NoteEdit, rhs: NoteEdit) -> Bool {
+        switch (lhs, rhs) {
+        case (.insertParagraphs(let paragraphs, let position), .insertParagraphs(let otherParagraphs, let otherPosition)):
+            return paragraphs == otherParagraphs && position == otherPosition
+        case (.insertText(let text, let position), .insertText(let otherText, let otherPosition)):
+            return text.utf16.elementsEqual(otherText.utf16) && position == otherPosition
+        case (.replaceText(let selection, let text), .replaceText(let otherSelection, let otherText)):
+            return selection == otherSelection && text.utf16.elementsEqual(otherText.utf16)
+        case (.deleteText(let selection), .deleteText(let otherSelection)):
+            return selection == otherSelection
+        case (.deleteParagraphs(let first, let last), .deleteParagraphs(let otherFirst, let otherLast)):
+            return first == otherFirst && last == otherLast
+        case (.setChecked(let isChecked, let anchor), .setChecked(let otherIsChecked, let otherAnchor)):
+            return isChecked == otherIsChecked && anchor == otherAnchor
+        default:
+            return false
+        }
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        switch self {
+        case .insertParagraphs(let paragraphs, let position):
+            hasher.combine(0)
+            hasher.combine(paragraphs)
+            hasher.combine(position)
+        case .insertText(let text, let position):
+            hasher.combine(1)
+            hasher.combine(Array(text.utf16))
+            hasher.combine(position)
+        case .replaceText(let selection, let text):
+            hasher.combine(2)
+            hasher.combine(selection)
+            hasher.combine(Array(text.utf16))
+        case .deleteText(let selection):
+            hasher.combine(3)
+            hasher.combine(selection)
+        case .deleteParagraphs(let first, let last):
+            hasher.combine(4)
+            hasher.combine(first)
+            hasher.combine(last)
+        case .setChecked(let isChecked, let anchor):
+            hasher.combine(5)
+            hasher.combine(isChecked)
+            hasher.combine(anchor)
+        }
     }
 }
 

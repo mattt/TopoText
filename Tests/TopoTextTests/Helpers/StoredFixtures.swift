@@ -167,6 +167,11 @@ func storedData(_ protobuf: [UInt8]) throws -> Data {
     try Data(protobuf).gzipped()
 }
 
+/// The text of stored contents, as the reader decodes it.
+func storedText(_ data: Data) throws -> String {
+    try NoteDocument(data: data).text
+}
+
 /// A document with everything that an edit must keep:
 /// several replicas, a tombstone, a substring with two children, fields that no schema names,
 /// checklist items with identifiers and states, a link on a run,
