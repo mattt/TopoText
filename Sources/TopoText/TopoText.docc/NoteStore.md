@@ -464,7 +464,7 @@ against what the edit engine relies on:
   clocks within each replica's text clock, tombstones of 1, and children that come later in the list.
   The engine has required more since, and the run did not measure these properties:
   a distinct UUID for each replica, a path along the child indexes from the first substring to every other one,
-  an identifier of its own for each character,
+  an identifier of its own for each character, with a replica index from 1,
   and an end marker with the replica 0, no characters, and no children.
 - The messages have only the fields that the format notes name:
   `String` 2 to 5, `Substring` 1 to 5, and `Clock` 1 and 2. `minimumSupportedVersion` is 0.

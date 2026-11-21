@@ -648,6 +648,8 @@ extension StoredNote {
                 if !substring.children.isEmpty { childIndexes = false }
                 continue
             }
+            // The index 0 is for the origin and the end marker. A character with it could share the origin's identifier.
+            if id.replica < 1, substring.length > 0 { replicaIndexes = false }
             if id.clock + substring.length >= limit || timestamp.clock >= limit { clockRange = false }
             if id.replica >= 1, id.replica <= replicaCount, id.clock + substring.length > textClocks[id.replica - 1] {
                 textClockValues = false

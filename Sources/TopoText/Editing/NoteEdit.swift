@@ -344,7 +344,8 @@ extension NoteEditError {
     /// Each of its 1,566 documents had the properties that existed then, the origin as its first substring,
     /// and a minimum supported version of 0.
     /// The run did not measure ``uniqueReplicas``, ``reachableSubstrings``, ``uniqueIdentifiers``,
-    /// the replica and the length of the end marker, or whether the end marker has children.
+    /// the replica and the length of the end marker, whether the end marker has children,
+    /// or whether a character has the replica index 0.
     /// See <doc:NoteStore> also for the merge state that most of the properties describe.
     /// The raw value describes the property without any of the note's contents.
     public enum Invariant: String, CaseIterable, Hashable, Sendable {
@@ -373,8 +374,12 @@ extension NoteEditError {
         case substringLengths = "the lengths of the substrings without a tombstone add up to the length of the text"
         /// The lengths of the attribute runs add up to the length of the text, and none is negative.
         case runLengths = "the lengths of the attribute runs add up to the length of the text, and none is negative"
-        /// Each character identifier and style timestamp names a replica of the vector timestamp.
-        case replicaIndexes = "each character identifier and style timestamp names a replica of the vector timestamp"
+        /// Each character identifier and style timestamp names a replica of the vector timestamp,
+        /// and each substring that holds characters, deleted or not, names one by an index from 1.
+        ///
+        /// The index 0 belongs to the origin and the end marker, which hold no characters.
+        case replicaIndexes =
+            "each character identifier and style timestamp names a replica of the vector timestamp, and no character has the replica index 0"
         /// No substring holds a clock value past the text clock of its replica.
         case textClocks = "no substring has a clock value past its replica's text clock"
         /// Each clock is below 2 to the power 31.

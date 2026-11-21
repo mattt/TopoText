@@ -1103,6 +1103,29 @@ private struct SplitMix: RandomNumberGenerator {
         }
     }
 
+    @Test("A document with a character of the replica index 0 is refused")
+    func characterOfReplicaZero() throws {
+        let replicas = [ReplicaSpec(uuid: replicaUUID(0x11), clocks: [2, 1])]
+        func error(_ substrings: [SubstringSpec], text: String) throws -> NoteEditError? {
+            do {
+                _ = try edit(storedDocument([run(text)], substrings: substrings, replicas: replicas), [.insertText("x", at: .offset(1))])
+                return nil
+            } catch let error as NoteEditError {
+                return error
+            }
+        }
+        let own = SubstringSpec(replica: 1, clock: 0, length: 2, style: (1, 0))
+        #expect(try error([originSubstring, own, endSubstring], text: "ab") == nil)
+        // A character with the origin's identifier, (0, 0), in the text and as deleted text.
+        let visible = SubstringSpec(replica: 0, clock: 0, length: 1, style: (1, 0))
+        #expect(try error([originSubstring, visible, own, endSubstring], text: "zab") == .unsupportedDocument(.replicaIndexes))
+        let deleted = SubstringSpec(replica: 0, clock: 0, length: 1, style: (1, 0), tombstone: 1)
+        #expect(try error([originSubstring, deleted, own, endSubstring], text: "ab") == .unsupportedDocument(.replicaIndexes))
+        // Another clock value does not make the index 0 a replica.
+        let later = SubstringSpec(replica: 0, clock: 5, length: 1, style: (1, 0))
+        #expect(try error([originSubstring, own, later, endSubstring], text: "abz") == .unsupportedDocument(.replicaIndexes))
+    }
+
     @Test("Each error says why the edit was not made")
     func descriptions() {
         let errors: [NoteEditError] = [
