@@ -458,10 +458,14 @@ against what the edit engine relies on:
 
 - Every document encodes to its stored bytes, and the stored bytes are in the canonical form,
   so a field that an edit writes has the same form as the fields around it.
-- Every document has every property that the engine requires before it edits:
+- Every document has every property that the engine required at the time of the run:
   one version, a vector timestamp, replicas with 16-byte UUIDs and no `subclock`,
   an end marker as the last substring, substring and run lengths that add up to the text,
   clocks within each replica's text clock, tombstones of 1, and children that come later in the list.
+  The engine has required more since, and the run did not measure these properties:
+  a distinct UUID for each replica, a path along the child indexes from the first substring to every other one,
+  an identifier of its own for each character,
+  and an end marker with the replica 0, no characters, and no children.
 - The messages have only the fields that the format notes name:
   `String` 2 to 5, `Substring` 1 to 5, and `Clock` 1 and 2. `minimumSupportedVersion` is 0.
 - Every replica has two clocks.

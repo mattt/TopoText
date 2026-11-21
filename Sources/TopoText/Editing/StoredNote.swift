@@ -437,7 +437,7 @@ struct StoredNote: Hashable, Sendable {
     let versionCount: Int
     /// The `minimumSupportedVersion` of the version, or `nil` if the field is absent, which reads as 0.
     ///
-    /// Every stored document that TopoText has checked has 0.
+    /// Each of the 1,566 documents of the run that <doc:NoteStore> records has 0.
     /// A higher value says that the document needs a reader that knows a later format.
     let minimumSupportedVersion: UInt64?
     /// Whether the stored text is valid UTF-8, so that ``text`` holds it without loss.

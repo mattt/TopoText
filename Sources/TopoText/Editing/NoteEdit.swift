@@ -5,7 +5,11 @@ import Foundation
 /// The caller is expected to be a tool that a language model drives.
 /// A model can't count UTF-16 code units, and the note can change between the read and the edit,
 /// so an edit names a place by a paragraph or by a match of existing text.
-/// A match that is absent or ambiguous fails; it never lands in another place.
+/// A match by text alone that is absent or ambiguous fails; it does not land in another place.
+/// That holds for ``ParagraphAnchor/containing(_:)`` and for a ``TextMatch`` without an occurrence.
+/// An occurrence number, a paragraph index, an offset, and a range count in the text as it is when the edit applies,
+/// so they name another place after text is inserted or deleted before them,
+/// by another edit of the same call or by a change to the note since it was read.
 ///
 /// Matches compare with the stored text, in which each attachment is one U+FFFC character.
 /// The text of a tag or a mention is not in the stored text, so a match can't span one.
@@ -19,9 +23,9 @@ import Foundation
 public enum NoteEdit: Sendable {
     /// Inserts paragraphs at the end of the note, or before or after a paragraph.
     case insertParagraphs([NewParagraph], at: ParagraphPosition)
-    /// Inserts text within a paragraph. The text can't contain a line feed.
+    /// Inserts text within a paragraph. The text can't contain a carriage return or a line feed.
     case insertText(String, at: TextPosition)
-    /// Replaces text with other text. The new text can't contain a line feed.
+    /// Replaces text with other text. The new text can't contain a carriage return or a line feed.
     case replaceText(TextSelection, with: String)
     /// Deletes text.
     ///
@@ -80,6 +84,8 @@ public enum NoteEdit: Sendable {
     /// A paragraph of the note.
     public enum ParagraphAnchor: Hashable, Sendable {
         /// The paragraph at an index into ``Note/Content/paragraphs``, from 0.
+        ///
+        /// The index counts the paragraphs as they are when the edit applies.
         case index(Int)
         /// The one paragraph whose text contains the given text.
         ///
@@ -108,6 +114,9 @@ public enum NoteEdit: Sendable {
         /// The paragraph to search, or `nil` to search the note.
         public let paragraph: ParagraphAnchor?
         /// Which match to take, from 1, or `nil` if the text must match once.
+        ///
+        /// The number counts the matches in the text as it is when the edit applies.
+        /// After another insertion of the same text, it names another match, and the edit does not fail.
         public let occurrence: Int?
 
         /// Creates a match of existing text.
@@ -243,7 +252,10 @@ public enum NoteEditError: Error, Hashable, Sendable {
     case occurrenceNotFound(String, matches: Int)
     /// The offset or range is outside the text.
     case outOfBounds
-    /// The offset or range would split a character that takes two UTF-16 code units.
+    /// The offset or range would split a surrogate pair, the two UTF-16 code units of one Unicode scalar.
+    ///
+    /// The editor doesn't check other boundaries within a character,
+    /// such as the one between a letter and a combining accent.
     case splitsCharacter
     /// The range holds an attachment, which the edit would delete. The value is the attachment's type.
     case attachmentInRange(type: String?)
@@ -260,7 +272,7 @@ public enum NoteEditError: Error, Hashable, Sendable {
     /// The range would join the start of one paragraph to the end of another, whose styles can differ.
     /// Delete whole paragraphs, or edit each paragraph separately.
     case joinsParagraphs
-    /// The new text has a line feed. Insert paragraphs instead.
+    /// The new text has a carriage return or a line feed. Insert paragraphs instead.
     case lineFeedInText
     /// The new text has the character U+FFFC, which stands for an attachment in stored text.
     case attachmentCharacterInText
@@ -299,7 +311,7 @@ extension NoteEditError: LocalizedError {
         case .outOfBounds:
             return "The position is outside the note's text."
         case .splitsCharacter:
-            return "The position is in the middle of a character."
+            return "The position is in the middle of a surrogate pair, the two code units of one character."
         case .attachmentInRange(let type):
             return "The edit would delete an attachment\(type.map { " of type \($0)" } ?? ""). Edit the text around it instead."
         case .tableInRange:
@@ -314,7 +326,7 @@ extension NoteEditError: LocalizedError {
         case .joinsParagraphs:
             return "The edit would join parts of two paragraphs. Delete whole paragraphs, or edit each paragraph separately."
         case .lineFeedInText:
-            return "The new text has a line feed. Insert paragraphs instead."
+            return "The new text has a carriage return or a line feed. Insert paragraphs instead."
         case .attachmentCharacterInText:
             return "The new text has the character U+FFFC, which stands for an attachment."
         case .notChecklistItem:
@@ -328,8 +340,12 @@ extension NoteEditError {
     ///
     /// The engine checks every property before each edit and after the last one,
     /// and throws ``NoteEditError/unsupportedDocument(_:)`` with the first one that the document lacks.
-    /// Every document that TopoText has checked against a real database had every property;
-    /// see <doc:NoteStore> for that check and for the merge state that most of the properties describe.
+    /// One run against a real database, which <doc:NoteStore> records, measured some of the properties and not others.
+    /// Each of its 1,566 documents had the properties that existed then, the origin as its first substring,
+    /// and a minimum supported version of 0.
+    /// The run did not measure ``uniqueReplicas``, ``reachableSubstrings``, ``uniqueIdentifiers``,
+    /// the replica and the length of the end marker, or whether the end marker has children.
+    /// See <doc:NoteStore> also for the merge state that most of the properties describe.
     /// The raw value describes the property without any of the note's contents.
     public enum Invariant: String, CaseIterable, Hashable, Sendable {
         /// The document has one `Version` message, as Notes writes it.

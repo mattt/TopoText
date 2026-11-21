@@ -85,6 +85,8 @@ To make several reads from one consistent snapshot, use `withSnapshot(_:)`.
 
 ## Editing
 
+Editing needs TopoText 0.4.0 or later, so depend on the package with `from: "0.4.0"`.
+
 `NoteEditor` applies edits to the stored contents of a note
 and returns new contents for the same note.
 It works on bytes:
@@ -112,6 +114,9 @@ deletes whole paragraphs,
 or sets whether a checklist item is done.
 It names its place by a paragraph or by a match of existing text,
 so a caller doesn't have to count UTF-16 code units.
+A match by text alone fails if the text is absent or occurs more than once.
+An occurrence number or a paragraph index counts in the text as it is when the edit applies,
+so it names another place after an earlier insertion or deletion.
 The editor updates the text, the attribute runs,
 and the state that Notes uses to merge edits from several devices,
 and leaves every other part of the document as it was.
@@ -124,12 +129,17 @@ If one edit of a call fails, the call returns nothing. The editor refuses:
 - a match that is absent, or that occurs more than once when the edit doesn't say which occurrence it means;
 - a range that would delete or split an attachment or a table,
   and text in the same paragraph as a table or as an attachment whose run doesn't store its type;
-- a range that would join parts of two paragraphs, or split a character;
-- new text with a line feed outside `insertParagraphs`, or with the attachment character U+FFFC;
+- a range that would join parts of two paragraphs, or split a surrogate pair,
+  the two UTF-16 code units of one Unicode scalar;
+- new text with a carriage return or a line feed outside `insertParagraphs`,
+  or with the attachment character U+FFFC;
+- a match with no text, or with an occurrence below 1, when the match is made;
 - a change of state for a paragraph that is not a checklist item;
 - a document without one of the properties that the editor relies on,
   such as a vector timestamp and consistent merge state.
   `NoteEditError.Invariant` lists them.
+  A run against one real database measured some of these properties and not others;
+  the format notes say which.
 
 The editor doesn't change formatting, and doesn't create or change tables and attachments.
 
