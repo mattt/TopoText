@@ -19,6 +19,9 @@ public enum NoteEdit: Hashable, Sendable {
     /// Replaces text with other text. The new text can't contain a line feed.
     case replaceText(TextSelection, with: String)
     /// Deletes text.
+    ///
+    /// Deleting all of a paragraph's text leaves the paragraph, empty, with its style.
+    /// To remove the paragraph, use ``deleteParagraphs(_:through:)``.
     case deleteText(TextSelection)
     /// Deletes whole paragraphs, from one paragraph through another, with their line feeds.
     case deleteParagraphs(ParagraphAnchor, through: ParagraphAnchor?)

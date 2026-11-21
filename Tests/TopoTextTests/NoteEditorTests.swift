@@ -421,6 +421,52 @@ private func expectConsistent(
         try expectConsistent(before, after, replaced: 60 ..< 69, inserted: 0)
     }
 
+    @Test("Clearing the text of the last paragraph leaves the paragraph, with its style and its checklist identifier")
+    func clearLastParagraph() throws {
+        let item = Array(repeating: UInt8(0x5A), count: 16)
+        func document(_ last: String) -> [UInt8] {
+            storedDocument([run("A\n"), run(last) { $0.message(2, paragraphStyle(103, todo: (item, 1))) }])
+        }
+        let clears: [NoteEdit] = [
+            .deleteText(.paragraphText(.index(1))), .replaceText(.paragraphText(.index(1)), with: ""), .deleteText(.range(2 ..< 3)),
+            .deleteText(.match(.init("B"))),
+        ]
+        for clear in clears {
+            // Without a line feed of its own, the paragraph gets one that holds its attributes.
+            var (before, after) = try edit(document("B"), [clear])
+            #expect(after.text == "A\n\n")
+            #expect(try decodedParagraphs(after).map(\.style.kind) == [.body, .checklist])
+            #expect(try decodedParagraphs(after).map(\.style.isChecked) == [false, true])
+            #expect(after.runs.map(\.length) == [2, 1])
+            #expect(after.runs[1].todo?.bytes(1) == item)
+            try expectConsistent(before, after, replaced: 2 ..< 3, inserted: 1)
+
+            // With a line feed, that line feed holds them already.
+            (before, after) = try edit(document("B\n"), [clear])
+            #expect(after.text == "A\n\n")
+            #expect(try decodedParagraphs(after).map(\.style.kind) == [.body, .checklist])
+            #expect(after.runs[1].todo?.bytes(1) == item)
+            try expectConsistent(before, after, replaced: 2 ..< 3, inserted: 0)
+        }
+
+        // A link on the text does not pass to the line feed, and a note of one paragraph keeps the paragraph.
+        let linked = storedDocument([
+            run("Title") {
+                $0.message(2, paragraphStyle(0))
+                $0.string(9, RichNote.link)
+            }
+        ])
+        let cleared = try edit(linked, [.deleteText(.paragraphText(.index(0)))]).after
+        #expect(cleared.text == "\n")
+        #expect(cleared.runs.count == 1 && cleared.runs[0].message.string(9) == nil)
+        #expect(try decodedParagraphs(cleared).map(\.style.kind) == [.title])
+
+        // Part of the text, and the deletion of the whole paragraph, are as before.
+        #expect(try edit(document("Bcd"), [.deleteText(.match(.init("cd")))]).after.text == "A\nB")
+        #expect(try edit(document("B"), [.deleteParagraphs(.index(1), through: nil)]).after.text == "A")
+        #expect(try edit(storedDocument([run("A\n"), run("\n"), run("B")]), [.deleteParagraphs(.index(2), through: nil)]).after.text == "A\n\n")
+    }
+
     @Test("An edit that changes nothing returns the same document")
     func noChange() throws {
         let edits: [NoteEdit] = [
@@ -767,7 +813,11 @@ private func expectConsistent(
             case .replaceText(.range(let range), let text):
                 // The text that the replacement must give, worked out without the editor.
                 let old = Array(before.text.utf16)
-                let expected = Array(old[..<range.lowerBound]) + Array(text.utf16) + Array(old[range.upperBound...])
+                var expected = Array(old[..<range.lowerBound]) + Array(text.utf16) + Array(old[range.upperBound...])
+                // Clearing the last paragraph, which has no line feed, leaves a line feed that keeps the paragraph.
+                let start = (old[..<range.lowerBound].lastIndex(of: 0x0A) ?? -1) + 1
+                let clearsLast = text.isEmpty && !range.isEmpty && range.lowerBound == start && range.upperBound == old.count && !old[range].contains(0x0A)
+                if clearsLast { expected.append(0x0A) }
                 #expect(Array(note.text.utf16) == expected, "step \(step)")
                 guard expected != old else {
                     // Only a replacement that asks for the text that is there may leave the document as it was.
@@ -775,7 +825,7 @@ private func expectConsistent(
                     unchanged += 1
                     continue
                 }
-                try expectConsistent(before, note, replaced: range, inserted: text.utf16.count, replica: replicaUUID(replica))
+                try expectConsistent(before, note, replaced: range, inserted: text.utf16.count + (clearsLast ? 1 : 0), replica: replicaUUID(replica))
             default:
                 #expect(note.brokenInvariants.isEmpty && note.isConnected, "step \(step)")
                 #expect(note.characters.count > before.characters.count)

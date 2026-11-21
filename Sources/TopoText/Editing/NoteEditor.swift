@@ -102,9 +102,9 @@ public struct NoteEditor: Sendable {
             let offset = try note.offset(of: position)
             try replace(offset ..< offset, with: text, in: &note)
         case .replaceText(let selection, let text):
-            try replace(try note.range(of: selection), with: text, in: &note)
+            try replace(try note.range(of: selection), with: text, keepingParagraph: true, in: &note)
         case .deleteText(let selection):
-            try replace(try note.range(of: selection), with: "", in: &note)
+            try replace(try note.range(of: selection), with: "", keepingParagraph: true, in: &note)
         case .deleteParagraphs(let first, let last):
             let paragraphs = note.paragraphRanges
             var lower = try note.paragraph(first)
@@ -133,9 +133,15 @@ public struct NoteEditor: Sendable {
     /// Inserted text takes the attributes of the character before it in its paragraph,
     /// or of the character after it at the start of a paragraph.
     /// Next to another run, as opposed to inside one, it does not take that run's link.
-    private func replace(_ range: Range<Int>, with text: String, in note: inout StoredNote) throws {
+    ///
+    /// The last paragraph of a note can lack a line feed, and text that ends at a line feed has no paragraph after it.
+    /// So when `keepingParagraph` is true and the range is all of the text of such a paragraph, with nothing to replace it,
+    /// a line feed takes the place of the text, with the attributes of the paragraph's first character.
+    /// The paragraph stays, empty, with its style and, for a checklist item, its identifier and state.
+    /// - Parameter keepingParagraph: Whether the edit changes text within a paragraph, as opposed to deleting paragraphs.
+    private func replace(_ range: Range<Int>, with text: String, keepingParagraph: Bool = false, in note: inout StoredNote) throws {
         let units = Array(note.text.utf16)
-        let inserted = Array(text.utf16)
+        var inserted = Array(text.utf16)
         guard range.lowerBound >= 0, range.upperBound <= units.count else {
             throw NoteEditError.outOfBounds
         }
@@ -174,7 +180,13 @@ public struct NoteEditor: Sendable {
         }
 
         var newRun: StoredNote.AttributeRun?
-        if !inserted.isEmpty {
+        if keepingParagraph, inserted.isEmpty, !range.isEmpty, range.lowerBound == paragraphStart, range.upperBound == units.count,
+            !units[range].contains(0x0A)
+        {
+            inserted = [0x0A]
+            newRun = note.run(at: range.lowerBound).map { note.runs[$0.index].copyForAdjacentText() } ?? StoredNote.AttributeRun(length: 0)
+            newRun?.length = 1
+        } else if !inserted.isEmpty {
             let before = range.lowerBound > 0 ? note.run(at: range.lowerBound - 1)?.index : nil
             let at = range.lowerBound < units.count ? note.run(at: range.lowerBound)?.index : nil
             if !range.isEmpty, let at {
