@@ -195,7 +195,7 @@ Notes combines the edits of several devices without a server that orders them.
 For that, the stored document records who inserted each character and when,
 and keeps deleted characters.
 ``Store`` doesn't read this state.
-The edit engine (`StoredNote` and `NoteEditor`) keeps it and updates it.
+The edit engine (``NoteEditor``, with the internal `StoredNote`) keeps it and updates it.
 
 ```proto
 message String {

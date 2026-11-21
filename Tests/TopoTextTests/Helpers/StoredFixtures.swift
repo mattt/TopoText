@@ -162,6 +162,11 @@ func storedDocument(
     return document.data
 }
 
+/// The contents of a `ZICNOTEDATA.ZDATA` row for a document: its bytes, gzip-compressed.
+func storedData(_ protobuf: [UInt8]) throws -> Data {
+    try Data(protobuf).gzipped()
+}
+
 /// A document with everything that an edit must keep:
 /// several replicas, a tombstone, a substring with two children, fields that no schema names,
 /// checklist items with identifiers and states, a link on a run,

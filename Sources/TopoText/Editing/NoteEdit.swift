@@ -9,7 +9,9 @@ import Foundation
 ///
 /// Matches compare with the stored text, in which each attachment is one U+FFFC character.
 /// The text of a tag or a mention is not in the stored text, so a match can't span one.
-enum NoteEdit: Hashable, Sendable {
+///
+/// Pass edits to ``NoteEditor/edit(_:of:applying:)``.
+public enum NoteEdit: Hashable, Sendable {
     /// Inserts paragraphs at the end of the note, or before or after a paragraph.
     case insertParagraphs([NewParagraph], at: ParagraphPosition)
     /// Inserts text within a paragraph. The text can't contain a line feed.
@@ -24,26 +26,41 @@ enum NoteEdit: Hashable, Sendable {
     case setChecked(Bool, at: ParagraphAnchor)
 
     /// Appends paragraphs to the end of the note.
-    static func appendParagraphs(_ paragraphs: [NewParagraph]) -> NoteEdit {
+    /// - Parameter paragraphs: The paragraphs, in order.
+    /// - Returns: An edit that inserts the paragraphs at ``ParagraphPosition/end``.
+    public static func appendParagraphs(_ paragraphs: [NewParagraph]) -> NoteEdit {
         .insertParagraphs(paragraphs, at: .end)
     }
 
     /// A paragraph to insert.
-    struct NewParagraph: Hashable, Sendable {
-        enum Style: Hashable, Sendable {
+    public struct NewParagraph: Hashable, Sendable {
+        /// The style of a new paragraph.
+        public enum Style: Hashable, Sendable {
+            /// Body text.
             case body
+            /// An item of a bulleted list.
             case bulleted
+            /// An item of a numbered list.
             case numbered
+            /// An item of a checklist.
             case checklist
         }
 
         /// The text. Each line feed in it starts another paragraph of the same style.
-        var text: String
-        var style: Style
+        ///
+        /// A paragraph can be empty. The text can't have the character U+FFFC, which stands for an attachment.
+        public var text: String
+        /// The style of the paragraph.
+        public var style: Style
         /// Whether a checklist item is done. Other styles ignore it.
-        var isChecked: Bool
+        public var isChecked: Bool
 
-        init(_ text: String, style: Style = .body, isChecked: Bool = false) {
+        /// Creates a paragraph to insert.
+        /// - Parameters:
+        ///   - text: The text. Each line feed in it starts another paragraph of the same style.
+        ///   - style: The style of the paragraph.
+        ///   - isChecked: Whether a checklist item is done. Other styles ignore it.
+        public init(_ text: String, style: Style = .body, isChecked: Bool = false) {
             self.text = text
             self.style = style
             self.isChecked = isChecked
@@ -51,30 +68,44 @@ enum NoteEdit: Hashable, Sendable {
     }
 
     /// A paragraph of the note.
-    enum ParagraphAnchor: Hashable, Sendable {
+    public enum ParagraphAnchor: Hashable, Sendable {
         /// The paragraph at an index into ``Note/Content/paragraphs``, from 0.
         case index(Int)
         /// The one paragraph whose text contains the given text.
+        ///
+        /// The edit fails if no paragraph contains the text, or if more than one does.
         case containing(String)
     }
 
     /// A place for new paragraphs.
-    enum ParagraphPosition: Hashable, Sendable {
+    public enum ParagraphPosition: Hashable, Sendable {
+        /// The end of the note, after its last paragraph.
         case end
+        /// Before a paragraph.
         case before(ParagraphAnchor)
+        /// After a paragraph and its line feed.
         case after(ParagraphAnchor)
     }
 
     /// A match of existing text.
-    struct TextMatch: Hashable, Sendable {
+    ///
+    /// The comparison is exact but for the composition of characters:
+    /// a letter with an accent matches whether it is stored as one character or as two.
+    /// Matches can overlap, and each one counts: "ana" matches twice in "banana".
+    public struct TextMatch: Hashable, Sendable {
         /// The text to find.
-        var text: String
+        public var text: String
         /// The paragraph to search, or `nil` to search the note.
-        var paragraph: ParagraphAnchor?
+        public var paragraph: ParagraphAnchor?
         /// Which match to take, from 1, or `nil` if the text must match once.
-        var occurrence: Int?
+        public var occurrence: Int?
 
-        init(_ text: String, in paragraph: ParagraphAnchor? = nil, occurrence: Int? = nil) {
+        /// Creates a match of existing text.
+        /// - Parameters:
+        ///   - text: The text to find.
+        ///   - paragraph: The paragraph to search, or `nil` to search the note.
+        ///   - occurrence: Which match to take, from 1, or `nil` if the text must match once.
+        public init(_ text: String, in paragraph: ParagraphAnchor? = nil, occurrence: Int? = nil) {
             self.text = text
             self.paragraph = paragraph
             self.occurrence = occurrence
@@ -82,9 +113,12 @@ enum NoteEdit: Hashable, Sendable {
     }
 
     /// A place for new text.
-    enum TextPosition: Hashable, Sendable {
+    public enum TextPosition: Hashable, Sendable {
+        /// Before the first character of a match.
         case before(TextMatch)
+        /// After the last character of a match.
         case after(TextMatch)
+        /// The start of a paragraph, before its first character.
         case startOfParagraph(ParagraphAnchor)
         /// The end of a paragraph, before its line feed.
         case endOfParagraph(ParagraphAnchor)
@@ -93,7 +127,8 @@ enum NoteEdit: Hashable, Sendable {
     }
 
     /// Existing text to replace or delete.
-    enum TextSelection: Hashable, Sendable {
+    public enum TextSelection: Hashable, Sendable {
+        /// The text of a match.
         case match(TextMatch)
         /// The text of a paragraph, without its line feed.
         case paragraphText(ParagraphAnchor)
@@ -105,13 +140,14 @@ enum NoteEdit: Hashable, Sendable {
 /// The reason that an edit was not made.
 ///
 /// An edit that fails changes nothing.
-enum NoteEditError: Error, Hashable, Sendable {
+/// ``NoteEditor/edit(_:of:applying:)`` then returns no contents, whichever of its edits failed.
+public enum NoteEditError: Error, Hashable, Sendable {
     /// The note is locked. Its contents are encrypted, and TopoText doesn't read or edit them.
     case noteLocked(Note.ID)
     /// The stored contents are not a note document that TopoText reads.
     case unreadableContent
     /// The stored document lacks a property that the edit engine relies on, so the engine leaves it alone.
-    case unsupportedDocument(StoredNote.Invariant)
+    case unsupportedDocument(Invariant)
     /// No paragraph has the index, or contains the text.
     case paragraphNotFound(NoteEdit.ParagraphAnchor)
     /// More than one paragraph contains the text.
@@ -150,7 +186,10 @@ enum NoteEditError: Error, Hashable, Sendable {
 }
 
 extension NoteEditError: LocalizedError {
-    var errorDescription: String? {
+    /// A sentence that says why the edit was not made, and what to do in its place where there is something to do.
+    ///
+    /// The description holds none of the note's text.
+    public var errorDescription: String? {
         switch self {
         case .noteLocked:
             return "The note is locked, so it can't be edited."
@@ -194,5 +233,51 @@ extension NoteEditError: LocalizedError {
         case .notChecklistItem:
             return "The paragraph is not a checklist item."
         }
+    }
+}
+
+extension NoteEditError {
+    /// A property of a stored document that the edit engine relies on.
+    ///
+    /// The engine checks every property before each edit and after the last one,
+    /// and throws ``NoteEditError/unsupportedDocument(_:)`` with the first one that the document lacks.
+    /// Every document that TopoText has checked against a real database had every property;
+    /// see <doc:NoteStore> for that check and for the merge state that most of the properties describe.
+    /// The raw value describes the property without any of the note's contents.
+    public enum Invariant: String, CaseIterable, Hashable, Sendable {
+        /// The document has one `Version` message, as Notes writes it.
+        case oneVersion = "the document has one version"
+        /// The `minimumSupportedVersion` of the version is 0 or absent. Another value asks for a reader of a later format.
+        case supportedVersion = "the minimum supported version is 0"
+        /// The stored text is valid UTF-8, so it can be read and written back without loss.
+        case validText = "the text is valid UTF-8"
+        /// The document has a vector timestamp, which lists the replicas that edited the note.
+        case vectorTimestamp = "the document has a vector timestamp"
+        /// Each replica of the vector timestamp has a UUID of 16 bytes.
+        case replicaIdentifiers = "each replica has a 16-byte UUID"
+        /// No replica clock has a `subclock`, which the engine does not maintain.
+        case noSubclock = "no replica clock has a subclock"
+        /// The first substring is the origin: it has the identifier (0, 0) and no characters.
+        case originSubstring = "the first substring has the identifier (0, 0) and no characters"
+        /// The last substring, and no other, is the end marker: it has the identifier (0, 0xFFFFFFFF) and no characters.
+        case endSubstring = "the last substring, and no other, is the end marker, with the identifier (0, 0xFFFFFFFF) and no characters"
+        /// The lengths of the substrings that hold text that is not deleted add up to the length of the text.
+        case substringLengths = "the lengths of the substrings without a tombstone add up to the length of the text"
+        /// The lengths of the attribute runs add up to the length of the text, and none is negative.
+        case runLengths = "the lengths of the attribute runs add up to the length of the text, and none is negative"
+        /// Each character identifier and style timestamp names a replica of the vector timestamp.
+        case replicaIndexes = "each character identifier and style timestamp names a replica of the vector timestamp"
+        /// No substring holds a clock value past the text clock of its replica.
+        case textClocks = "no substring has a clock value past its replica's text clock"
+        /// Each clock is below 2 to the power 31.
+        case clockRange = "each clock is below 2 to the power 31"
+        /// Each tombstone, which marks deleted text, has the value 1.
+        case tombstoneValues = "each tombstone value is 1"
+        /// Each substring but the end marker has children, and each child comes later in the list of substrings.
+        case childIndexes = "each substring but the end marker has children, and each child comes later in the list"
+        /// The child indexes lead from the first substring to every other one.
+        case reachableSubstrings = "each substring can be reached from the first along the child indexes"
+        /// No two characters, deleted or not, have the same replica and clock value.
+        case uniqueIdentifiers = "no two characters have one identifier"
     }
 }

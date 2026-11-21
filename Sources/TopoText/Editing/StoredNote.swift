@@ -600,29 +600,8 @@ extension StoredNote {
 // MARK: - Invariants
 
 extension StoredNote {
-    /// A property of a stored document that the edit engine relies on.
-    ///
-    /// A document that lacks one of them is not edited.
-    /// The raw value describes the property without any of the note's contents.
-    enum Invariant: String, CaseIterable, Hashable, Sendable {
-        case oneVersion = "the document has one version"
-        case supportedVersion = "the minimum supported version is 0"
-        case validText = "the text is valid UTF-8"
-        case vectorTimestamp = "the document has a vector timestamp"
-        case replicaIdentifiers = "each replica has a 16-byte UUID"
-        case noSubclock = "no replica clock has a subclock"
-        case originSubstring = "the first substring has the identifier (0, 0) and no characters"
-        case endSubstring = "the last substring, and no other, is the end marker, with the identifier (0, 0xFFFFFFFF) and no characters"
-        case substringLengths = "the lengths of the substrings without a tombstone add up to the length of the text"
-        case runLengths = "the lengths of the attribute runs add up to the length of the text, and none is negative"
-        case replicaIndexes = "each character identifier and style timestamp names a replica of the vector timestamp"
-        case textClocks = "no substring has a clock value past its replica's text clock"
-        case clockRange = "each clock is below 2 to the power 31"
-        case tombstoneValues = "each tombstone value is 1"
-        case childIndexes = "each substring but the end marker has children, and each child comes later in the list"
-        case reachableSubstrings = "each substring can be reached from the first along the child indexes"
-        case uniqueIdentifiers = "no two characters have one identifier"
-    }
+    /// A property of a stored document that the edit engine relies on. A document that lacks one of them is not edited.
+    typealias Invariant = NoteEditError.Invariant
 
     /// The invariants that the document lacks.
     var brokenInvariants: [Invariant] {

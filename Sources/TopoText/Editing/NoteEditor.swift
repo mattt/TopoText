@@ -4,26 +4,47 @@ import Foundation
 ///
 /// The editor changes the text, the attribute runs, and the merge state together,
 /// and leaves every other part of the document as it was.
-/// It reads and returns bytes. It does not open a database.
+/// It reads and returns bytes. It does not open a database, and it writes nothing anywhere:
+/// what happens to the returned contents is up to the caller.
+///
+/// ```swift
+/// let editor = NoteEditor()
+/// let edited = try editor.edit(
+///     data,
+///     of: note,
+///     applying: [
+///         .replaceText(.match(.init("Tuesday")), with: "Wednesday"),
+///         .setChecked(true, at: .containing("Pack bags")),
+///         .appendParagraphs([.init("Call the hotel", style: .checklist)]),
+///     ]
+/// )
+/// ```
 ///
 /// An edit never deletes or splits an attachment, and it fails rather than guess:
 /// see ``NoteEditError`` for the reasons.
 /// When an edit fails, none of the edits of the call are applied.
-struct NoteEditor: Sendable {
+///
+/// The editor changes the text, checklists, and plain paragraphs and list items.
+/// It does not change formatting, tables, or attachments, and it does not create them.
+public struct NoteEditor: Sendable {
     /// The replica that the edits belong to.
     ///
     /// Notes tells editors apart by a UUID in the document's vector timestamp.
     /// The default is a new UUID for each editor, as a new session of the Notes web app takes one.
     /// A replica must never give one clock value to two different characters,
     /// so use an editor's replica again only for a document that holds its earlier edits.
-    var replica: UUID
+    public var replica: UUID
     /// Makes the identifier of a new checklist item.
     ///
     /// The stored form is the 16 bytes of a UUID.
     /// Notes doesn't derive the identifier from anything, so a random UUID serves.
-    var makeIdentifier: @Sendable () -> UUID
+    public var makeIdentifier: @Sendable () -> UUID
 
-    init(replica: UUID = UUID(), makeIdentifier: @escaping @Sendable () -> UUID = { UUID() }) {
+    /// Creates an editor.
+    /// - Parameters:
+    ///   - replica: The replica that the edits belong to. The default is a new UUID.
+    ///   - makeIdentifier: A function that makes the identifier of a new checklist item. The default makes a random UUID.
+    public init(replica: UUID = UUID(), makeIdentifier: @escaping @Sendable () -> UUID = { UUID() }) {
         self.replica = replica
         self.makeIdentifier = makeIdentifier
     }
@@ -33,10 +54,14 @@ struct NoteEditor: Sendable {
     ///   - data: The contents of the note's row in `ZICNOTEDATA.ZDATA`.
     ///   - note: The note that the contents belong to.
     ///   - edits: The edits, which apply in order. Each one sees the note as the edits before it left it.
-    /// - Returns: New contents for the same row. Edits that change nothing return contents with the same document.
+    /// - Returns: New contents for the same row: the edited document, gzip-compressed.
+    ///   Edits that change nothing return contents with the same document.
+    ///   The compressed bytes can differ from the stored ones even then, because gzip allows many encodings of one input;
+    ///   compare decompressed contents.
     /// - Throws: ``NoteEditError/noteLocked(_:)`` for a locked note, before it reads the data,
     ///   or another ``NoteEditError`` that names why an edit was not made.
-    func edit(_ data: Data, of note: Note, applying edits: [NoteEdit]) throws -> Data {
+    ///   If Foundation can't compress the edited document, the method throws Foundation's error.
+    public func edit(_ data: Data, of note: Note, applying edits: [NoteEdit]) throws -> Data {
         guard !note.isLocked else {
             throw NoteEditError.noteLocked(note.id)
         }
