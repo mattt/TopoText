@@ -435,6 +435,11 @@ struct StoredNote: Hashable, Sendable {
 
     /// The number of `Version` messages in the document. Notes writes one.
     let versionCount: Int
+    /// The `minimumSupportedVersion` of the version, or `nil` if the field is absent, which reads as 0.
+    ///
+    /// Every stored document that TopoText has checked has 0.
+    /// A higher value says that the document needs a reader that knows a later format.
+    let minimumSupportedVersion: UInt64?
     /// Whether the stored text is valid UTF-8, so that ``text`` holds it without loss.
     let textIsValid: Bool
 
@@ -467,6 +472,7 @@ struct StoredNote: Hashable, Sendable {
         }
         string = try WireMessage(stringBytes)
         versionCount = document.values(2).count
+        minimumSupportedVersion = version.varint(2)
 
         let textBytes = string.bytes(2) ?? []
         text = String(decoding: textBytes, as: UTF8.self)
@@ -600,11 +606,13 @@ extension StoredNote {
     /// The raw value describes the property without any of the note's contents.
     enum Invariant: String, CaseIterable, Hashable, Sendable {
         case oneVersion = "the document has one version"
+        case supportedVersion = "the minimum supported version is 0"
         case validText = "the text is valid UTF-8"
         case vectorTimestamp = "the document has a vector timestamp"
         case replicaIdentifiers = "each replica has a 16-byte UUID"
         case noSubclock = "no replica clock has a subclock"
-        case endSubstring = "the last substring, and no other, is the end marker"
+        case originSubstring = "the first substring has the identifier (0, 0) and no characters"
+        case endSubstring = "the last substring, and no other, is the end marker, with the identifier (0, 0xFFFFFFFF) and no characters"
         case substringLengths = "the lengths of the substrings without a tombstone add up to the length of the text"
         case runLengths = "the lengths of the attribute runs add up to the length of the text, and none is negative"
         case replicaIndexes = "each character identifier and style timestamp names a replica of the vector timestamp"
@@ -612,6 +620,8 @@ extension StoredNote {
         case clockRange = "each clock is below 2 to the power 31"
         case tombstoneValues = "each tombstone value is 1"
         case childIndexes = "each substring but the end marker has children, and each child comes later in the list"
+        case reachableSubstrings = "each substring can be reached from the first along the child indexes"
+        case uniqueIdentifiers = "no two characters have one identifier"
     }
 
     /// The invariants that the document lacks.
@@ -623,11 +633,16 @@ extension StoredNote {
         let length = self.length
 
         require(.oneVersion, versionCount == 1)
+        require(.supportedVersion, (minimumSupportedVersion ?? 0) == 0)
         require(.validText, textIsValid)
         require(.vectorTimestamp, hasVectorTimestamp)
         require(.replicaIdentifiers, replicas.allSatisfy { $0.uuid.count == 16 })
         require(.noSubclock, !replicas.contains(where: \.hasSubclock))
-        require(.endSubstring, substrings.last?.isEnd == true && !substrings.dropLast().contains(where: \.isEnd))
+        require(.originSubstring, substrings.first.map { $0.id == CharacterID(replica: 0, clock: 0) && $0.length == 0 } ?? false)
+        require(
+            .endSubstring,
+            substrings.last.map { $0.isEnd && $0.id.replica == 0 && $0.length == 0 } ?? false && !substrings.dropLast().contains(where: \.isEnd)
+        )
         require(.substringLengths, substrings.reduce(0) { $0 + ($1.isTombstone ? 0 : $1.length) } == length)
         require(.runLengths, runs.allSatisfy { $0.length >= 0 } && runs.reduce(0) { $0 + $1.length } == length)
 
@@ -664,6 +679,49 @@ extension StoredNote {
         require(.clockRange, clockRange)
         require(.textClocks, textClockValues)
         require(.childIndexes, childIndexes)
+        // Children that come later in the list can still leave a substring that no other one points to.
+        require(.reachableSubstrings, reachesEverySubstring)
+        require(.uniqueIdentifiers, hasUniqueIdentifiers)
         return Invariant.allCases.filter(broken.contains)
+    }
+    /// Whether the child indexes lead from the first substring to every other one.
+    var reachesEverySubstring: Bool {
+        guard !substrings.isEmpty else { return true }
+        var reached = Array(repeating: false, count: substrings.count)
+        reached[0] = true
+        var count = 1
+        // Where each child comes later in the list, one pass in order reaches all that can be reached.
+        for index in substrings.indices where reached[index] {
+            for child in substrings[index].children where child >= 0 && child < reached.count && !reached[child] {
+                reached[child] = true
+                count += 1
+            }
+        }
+        return count == substrings.count
+    }
+
+    /// Whether each character that the document records, deleted or not, has an identifier of its own:
+    /// no two substrings of one replica hold the same clock value.
+    var hasUniqueIdentifiers: Bool {
+        // For each replica, the clock ranges as numbers that sort by their first clock:
+        // a clock is below 2 to the power 32, and a length that an invariant allows is below 2 to the power 31.
+        let mask = (1 << 31) - 1
+        var ranges: [[Int]] = Array(repeating: [], count: replicas.count + 1)
+        for substring in substrings where !substring.isEnd && substring.length > 0 {
+            let id = substring.id
+            // Another invariant covers an identifier that names no replica.
+            guard id.replica >= 0, id.replica < ranges.count else { continue }
+            ranges[id.replica].append(id.clock << 31 | min(substring.length, mask))
+        }
+        for index in ranges.indices {
+            ranges[index].sort()
+            var end = 0
+            for range in ranges[index] {
+                let clock = range >> 31
+                if clock < end { return false }
+                end = clock + (range & mask)
+            }
+        }
+        return true
     }
 }

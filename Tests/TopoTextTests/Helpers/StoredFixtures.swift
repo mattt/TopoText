@@ -82,6 +82,7 @@ func attachmentInfo(_ identifier: String, _ type: String) -> PB {
 ///   - replicas: The vector timestamp, or `nil` for one replica. An empty list writes an empty vector timestamp.
 ///   - hasVectorTimestamp: Whether to write the vector timestamp.
 ///   - versions: The number of `Version` messages. The last one holds the note.
+///   - minimumSupportedVersion: The `minimumSupportedVersion` of each version, or `nil` to leave the field out.
 ///   - unknownFields: Whether to add fields that no schema names to the document, the version, and the string.
 func storedDocument(
     _ runs: [StoredRun],
@@ -89,6 +90,7 @@ func storedDocument(
     replicas: [ReplicaSpec]? = nil,
     hasVectorTimestamp: Bool = true,
     versions: Int = 1,
+    minimumSupportedVersion: Int? = 0,
     unknownFields: Bool = false
 ) -> [UInt8] {
     let text = runs.map(\.text).joined()
@@ -151,7 +153,7 @@ func storedDocument(
     for index in 0 ..< versions {
         var version = PB()
         version.int(1, 0)
-        version.int(2, 0)
+        if let minimumSupportedVersion { version.int(2, minimumSupportedVersion) }
         version.message(3, index == versions - 1 ? string : PB())
         if unknownFields { version.int(7, 42) }
         document.message(2, version)

@@ -143,8 +143,6 @@ extension StoredNote {
         let replaced = expectation.replaced
         let inserted = expectation.inserted
 
-        require(edited.reachesEverySubstring, "a substring can't be reached from the first")
-
         let old = Array(text.utf16)
         let new = Array(edited.text.utf16)
         let tail = old.count - replaced.upperBound
@@ -180,7 +178,6 @@ extension StoredNote {
         }
         let before = segments(replicaNumbers)
         let after = edited.segments(replicaNumbers)
-        require(!Self.identifiersOverlap(after), "two characters have one identifier")
 
         // Walk both lists together. A piece of the edited document either continues the stored document,
         // with the same identifier, or it is new.
@@ -280,43 +277,6 @@ extension StoredNote {
             )
         }
         return segments
-    }
-
-    /// Returns whether two segments hold a character with the same identifier.
-    private static func identifiersOverlap(_ segments: [Segment]) -> Bool {
-        // For each replica, the clock ranges as numbers that sort by their first clock:
-        // a clock is below 2 to the power 32, and a length that an invariant allows is below 2 to the power 31.
-        var ranges: [[Int]] = []
-        for segment in segments {
-            while ranges.count <= segment.replica { ranges.append([]) }
-            ranges[segment.replica].append(segment.clock << 31 | min(segment.length, (1 << 31) - 1))
-        }
-        for index in ranges.indices {
-            ranges[index].sort()
-            var end = 0
-            for range in ranges[index] {
-                let clock = range >> 31
-                if clock < end { return true }
-                end = clock + (range & ((1 << 31) - 1))
-            }
-        }
-        return false
-    }
-
-    /// Whether the child indexes lead from the first substring to every other one.
-    var reachesEverySubstring: Bool {
-        guard !substrings.isEmpty else { return true }
-        var reached = Array(repeating: false, count: substrings.count)
-        reached[0] = true
-        var count = 1
-        // The invariants make each child come later in the list, so one pass in order reaches all that can be reached.
-        for index in substrings.indices where reached[index] {
-            for child in substrings[index].children where child >= 0 && child < reached.count && !reached[child] {
-                reached[child] = true
-                count += 1
-            }
-        }
-        return count == substrings.count
     }
 
     private struct AttributeSpan: Equatable {

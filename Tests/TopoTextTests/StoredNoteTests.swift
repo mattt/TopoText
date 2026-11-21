@@ -236,9 +236,14 @@ import Testing
         #expect(try broken(storedDocument(text, substrings: substrings(SubstringSpec(replica: 1, clock: 0, length: 5, style: (3, 0))))) == [.replicaIndexes])
         #expect(try broken(storedDocument(text, substrings: substrings(SubstringSpec(replica: 1, clock: 1, length: 5)))) == [.textClocks])
         #expect(try broken(storedDocument(text, substrings: substrings(SubstringSpec(replica: 1, clock: 0, length: 5, style: (1, 1 << 31))))) == [.clockRange])
-        #expect(try broken(storedDocument(text, substrings: substrings(SubstringSpec(replica: 1, clock: 0, length: 5, children: [])))) == [.childIndexes])
-        #expect(try broken(storedDocument(text, substrings: substrings(SubstringSpec(replica: 1, clock: 0, length: 5, children: [1])))) == [.childIndexes])
-        #expect(try broken(storedDocument(text, substrings: substrings(SubstringSpec(replica: 1, clock: 0, length: 5, children: [3])))) == [.childIndexes])
+        for children in [[], [1], [3]] {
+            let document = storedDocument(text, substrings: substrings(SubstringSpec(replica: 1, clock: 0, length: 5, children: children)))
+            // Without a child that comes later, the end marker can't be reached either.
+            #expect(try broken(document) == [.childIndexes, .reachableSubstrings])
+        }
+        #expect(try broken(storedDocument(text, minimumSupportedVersion: 2)) == [.supportedVersion])
+        #expect(try broken(storedDocument(text, minimumSupportedVersion: nil)).isEmpty)
+        #expect(try broken(storedDocument(text, substrings: [middle, endSubstring])).contains(.originSubstring))
 
         // A tombstone value other than 1.
         var deleted = SubstringSpec(replica: 1, clock: 5, length: 1, tombstone: 2)

@@ -87,8 +87,15 @@ import Testing
         )
         #expect(failures { $0.substrings[last].styleTimestamp.clock += 1 } == ["a style timestamp outside the edit changed"])
         #expect(failures { $0.substrings[last].id.clock += 1 }.contains("a character is lost or out of order"))
-        #expect(failures { $0.substrings[last].id = $0.substrings[1].id }.contains("two characters have one identifier"))
-        #expect(failures { $0.substrings[0].children = [2] } == ["a substring can't be reached from the first"])
+        // The invariants cover a character with the identifier of another, and a substring that no other one points to.
+        #expect(
+            failures { $0.substrings[last].id = $0.substrings[1].id }.contains(
+                "afterwards it is not true that \(StoredNote.Invariant.uniqueIdentifiers.rawValue)"
+            )
+        )
+        #expect(
+            failures { $0.substrings[0].children = [2] } == ["afterwards it is not true that \(StoredNote.Invariant.reachableSubstrings.rawValue)"]
+        )
         let style = WireMessage([.init(1, .varint(100))])
         #expect(failures { $0.runs[$0.runs.count - 1].paragraphStyle = style } == ["the attributes after the edit changed"])
         #expect(failures { $0.runs[0].paragraphStyle = style }.contains("the attributes before the edit changed"))

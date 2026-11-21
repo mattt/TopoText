@@ -902,9 +902,61 @@ private struct SplitMix: RandomNumberGenerator {
                 == .unsupportedDocument(.noSubclock)
         )
         #expect(error(storedDocument([run("Sub")], substrings: [originSubstring, endSubstring])) == .unsupportedDocument(.substringLengths))
+        #expect(error(storedDocument([run("New")], minimumSupportedVersion: 1)) == .unsupportedDocument(.supportedVersion))
+        // A version without the field reads as 0.
+        #expect(error(storedDocument([run("Old")], minimumSupportedVersion: nil)) == nil)
         // With no edits, a document comes back as it is, whatever it lacks.
         let plain = noteProtobuf([RunSpec(text: "Plain")])
         #expect(try edit(plain, []).after.protobuf() == plain)
+    }
+
+    @Test("A document with inconsistent merge state is refused")
+    func inconsistentMergeState() throws {
+        let replicas = [ReplicaSpec(uuid: replicaUUID(0x11), clocks: [3, 1])]
+        func error(_ substrings: [SubstringSpec]) throws -> NoteEditError? {
+            do {
+                _ = try edit(storedDocument([run("abc")], substrings: substrings, replicas: replicas), [.insertText("x", at: .offset(1))])
+                return nil
+            } catch let error as NoteEditError {
+                return error
+            }
+        }
+        let text = SubstringSpec(replica: 1, clock: 0, length: 3, style: (1, 0))
+        #expect(try error([originSubstring, text, endSubstring]) == nil)
+
+        // Each child comes later in the list, but none points to the second substring.
+        var skipping = originSubstring
+        skipping.children = [2]
+        let unreachable = [
+            skipping, SubstringSpec(replica: 1, clock: 0, length: 1, style: (1, 0)), SubstringSpec(replica: 1, clock: 1, length: 2, style: (1, 0)),
+            endSubstring,
+        ]
+        #expect(try error(unreachable) == .unsupportedDocument(.reachableSubstrings))
+
+        // Two substrings of one replica hold the clock value 1, one of them as deleted text.
+        let overlapping = [
+            originSubstring, SubstringSpec(replica: 1, clock: 0, length: 2, style: (1, 0), tombstone: 1),
+            SubstringSpec(replica: 1, clock: 1, length: 2, style: (1, 0)), SubstringSpec(replica: 1, clock: 0, length: 1, style: (1, 0)),
+            endSubstring,
+        ]
+        #expect(try error(overlapping) == .unsupportedDocument(.uniqueIdentifiers))
+
+        // The first substring is not the origin: it has another identifier, or it holds characters.
+        #expect(try error([SubstringSpec(replica: 1, clock: 0, length: 0), text, endSubstring]) == .unsupportedDocument(.originSubstring))
+        #expect(try error([SubstringSpec(replica: 0, clock: 7, length: 0), text, endSubstring]) == .unsupportedDocument(.originSubstring))
+        #expect(
+            try error([SubstringSpec(replica: 0, clock: 0, length: 1, tombstone: 1), text, endSubstring]) == .unsupportedDocument(.originSubstring)
+        )
+        #expect(try error([text, endSubstring]) == .unsupportedDocument(.originSubstring))
+
+        // The last substring has the end clock, but another replica, or characters.
+        var end = endSubstring
+        end.replica = 1
+        #expect(try error([originSubstring, text, end]) == .unsupportedDocument(.endSubstring))
+        end = endSubstring
+        end.length = 1
+        end.tombstone = 1
+        #expect(try error([originSubstring, text, end]) == .unsupportedDocument(.endSubstring))
     }
 
     @Test("Each error says why the edit was not made")
