@@ -731,6 +731,23 @@ private struct SplitMix: RandomNumberGenerator {
         try expectConsistent(before, after, replaced: 0 ..< 5, inserted: 3)
     }
 
+    @Test("A replacement that differs only in how a character is composed writes the new code units")
+    func recomposedReplacement() throws {
+        // From one code unit to two.
+        var (before, after) = try edit(storedDocument([run("Caf\u{E9} menu")]), [.replaceText(.match(.init("\u{E9}")), with: "e\u{301}")])
+        #expect(Array(after.text.utf16) == Array("Cafe".utf16) + [0x301] + Array(" menu".utf16))
+        #expect(after.runs.map(\.length) == [10])
+        #expect(after.brokenInvariants.isEmpty)
+        try expectConsistent(before, after, replaced: 3 ..< 4, inserted: 2)
+
+        // From two code units to one.
+        (before, after) = try edit(storedDocument([run("Cafe\u{301} menu")]), [.replaceText(.range(3 ..< 5), with: "\u{E9}")])
+        #expect(Array(after.text.utf16) == Array("Caf".utf16) + [0xE9] + Array(" menu".utf16))
+        #expect(after.runs.map(\.length) == [9])
+        #expect(after.brokenInvariants.isEmpty)
+        try expectConsistent(before, after, replaced: 3 ..< 5, inserted: 1)
+    }
+
     @Test("Each edit sees the note as the edits before it left it, and a failure applies none of them")
     func batches() throws {
         let after = try edit(

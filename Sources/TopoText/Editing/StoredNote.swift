@@ -496,7 +496,9 @@ struct StoredNote: Hashable, Sendable {
     /// The decompressed bytes of the document.
     func protobuf() -> [UInt8] {
         var string = string
-        if text != storedText {
+        // Swift compares strings by canonical equivalence, so "é" equals "e" with U+0301.
+        // The stored bytes must be the text's own, so compare the bytes.
+        if !text.utf8.elementsEqual(storedText.utf8) {
             string.set(2, .bytes(Array(text.utf8)))
         }
         string.setRepeated(3, substrings.map { .bytes($0.encoded) })
