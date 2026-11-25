@@ -763,6 +763,28 @@ private func expectConsistent(
         #expect(try edit(storedDocument([run("A") { $0.message(2, paragraphStyle(103)) }]), [.setChecked(false, at: .index(0))]).after == before)
     }
 
+    @Test("Checking an item preserves the stored bytes of an unchanged run between checklist runs")
+    func unchangedRunEncoding() throws {
+        let style = paragraphStyle(103, todo: (replicaUUID(0x5A), 0))
+        let runs = [run("A") { $0.message(2, style) }, run("B"), run("C") { $0.message(2, style) }]
+        var document = try WireMessage(storedDocument(runs))
+        var version = try #require(document.message(2))
+        var string = try #require(version.message(3))
+        // Field 5 holds the middle run. Its length of two bytes uses a two-byte varint.
+        let middle = try WireMessage([0x2A, 0x82, 0x00, 0x08, 0x01] as [UInt8])
+        let indices = string.fields.indices.filter { string.fields[$0].number == 5 }
+        string.fields[indices[1]] = middle.fields[0]
+        version.setMessage(3, string)
+        document.setMessage(2, version)
+
+        let (_, after) = try edit(document.encoded(), [.setChecked(true, at: .index(0))])
+        #expect(after.text == "ABC")
+        #expect(after.runs.map { $0.todo?.varint(2) } == [1, nil, 1])
+        let edited = try #require(try WireMessage(after.protobuf()).message(2)?.message(3))
+        let editedRuns = edited.fields.filter { $0.number == 5 }
+        #expect(WireMessage([editedRuns[1]]).encoded() == middle.encoded())
+    }
+
     @Test("A change of state never splits the run of an attachment")
     func setCheckedBesideAttachment() throws {
         let item = Array(repeating: UInt8(0x5A), count: 16)
