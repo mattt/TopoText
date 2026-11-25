@@ -351,7 +351,7 @@ extension WireMessage {
         let new = values[head ..< values.count - tail]
         if old.count == new.count {
             // The same number of values: each one takes the place of the value that it replaces.
-            for (index, value) in zip(indexes[head ..< indexes.count - tail], new) {
+            for (index, value) in zip(indexes[head ..< indexes.count - tail], new) where fields[index].value != value {
                 fields[index] = Field(number, value)
             }
             return
